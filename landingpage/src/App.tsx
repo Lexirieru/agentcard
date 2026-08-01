@@ -584,7 +584,7 @@ function ChatDemoSection() {
   return (
     <section
       ref={ref}
-      className={`${GUTTER} flex min-h-screen scroll-mt-24 items-center bg-[#0A0B11] py-24`}
+      className={`${GUTTER} flex min-h-screen scroll-mt-24 items-center bg-[#F4F0ED] py-24`}
     >
       <div className={`${CONTAINER} ${WIDE}`}>
         <div className="flex flex-col gap-4 sm:gap-6">
@@ -601,7 +601,7 @@ function ChatDemoSection() {
               >
                 {startsRun && (
                   <span
-                    className={`mb-2 px-3 text-xs text-white/35 transition-opacity duration-300 sm:text-sm ${
+                    className={`mb-2 px-3 text-xs text-[#18161B]/40 transition-opacity duration-300 sm:text-sm ${
                       started ? 'opacity-100' : 'opacity-0'
                     }`}
                   >
@@ -618,8 +618,8 @@ function ChatDemoSection() {
                     started ? 'opacity-100' : 'opacity-0'
                   } ${
                     isYou
-                      ? 'bg-white/[0.07] text-white/90'
-                      : 'bg-[#F4F0ED] text-[#18161B]'
+                      ? 'bg-[#18161B]/[0.06] text-[#18161B]'
+                      : 'bg-[#18161B] text-[#F4F0ED]'
                   }`}
                   style={{
                     fontSize: 'clamp(1.05rem, 2.4vw, 1.75rem)',
@@ -644,13 +644,13 @@ function ChatDemoSection() {
             [0, 1, 2].map((d) => (
               <span
                 key={d}
-                className="h-2 w-2 animate-pulse rounded-full bg-[#F4F0ED]/60"
+                className="h-2 w-2 animate-pulse rounded-full bg-[#18161B]/40"
                 style={{ animationDelay: `${d * 0.15}s` }}
               />
             ))}
         </div>
 
-        <p className="mt-6 max-w-lg text-[15px] leading-relaxed text-white/45">
+        <p className="mt-6 max-w-lg text-[15px] leading-relaxed text-[#18161B]/55">
           No standing balance, and no approval the agent can widen later. The card
           exists for one charge, and the vault settles the rest back to you.
         </p>
