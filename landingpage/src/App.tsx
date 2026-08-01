@@ -60,19 +60,12 @@ const INSTALL_COMMAND = 'npx giwacard'
  * closing line is emphasised.
  */
 const TRANSCRIPT: { speaker: 'you' | 'agent'; text: string; emphasis?: boolean }[] = [
-  { speaker: 'you', text: 'pay for the GIWA Insights report' },
-  {
-    speaker: 'agent',
-    text: 'minting a card — 1 gUSD, one merchant, expires in 5 minutes',
-  },
-  { speaker: 'agent', text: 'paid. the card is dead now, and the change came back.' },
-  { speaker: 'you', text: 'put my Claude subscription on giwacard' },
-  { speaker: 'agent', text: 'that is 20 gUSD a month — over your 10 gUSD cap' },
-  {
-    speaker: 'agent',
-    text: 'queued for your approval. nothing has moved.',
-    emphasis: true,
-  },
+  { speaker: 'you', text: 'buy the insights report' },
+  { speaker: 'agent', text: 'minting a card. 1 gUSD, one merchant.' },
+  { speaker: 'agent', text: 'paid. the card is dead.' },
+  { speaker: 'you', text: 'put my Claude sub on giwacard' },
+  { speaker: 'agent', text: '20 gUSD a month — over your cap' },
+  { speaker: 'agent', text: 'queued for your approval.', emphasis: true },
 ]
 
 const FEATURES: { title: string; body: ReactNode }[] = [
@@ -591,10 +584,10 @@ function ChatDemoSection() {
   return (
     <section
       ref={ref}
-      className={`${GUTTER} scroll-mt-24 bg-[#0A0B11] py-24 sm:py-32`}
+      className={`${GUTTER} scroll-mt-24 bg-[#0A0B11] py-28 sm:py-40`}
     >
-      <div className={CONTAINER}>
-        <div className="flex flex-col gap-6 sm:gap-8">
+      <div className={`${CONTAINER} ${WIDE}`}>
+        <div className="flex flex-col gap-5 sm:gap-7">
           {TRANSCRIPT.map((entry, i) => {
             const shown = typed[i] ?? ''
             if (!shown && i > visibleCount) return null
@@ -614,12 +607,12 @@ function ChatDemoSection() {
                   </span>
                 )}
                 <div
-                  className={`max-w-[92%] rounded-full px-7 py-4 sm:max-w-[85%] sm:px-10 sm:py-6 ${
-                    isYou ? 'bg-white/[0.08] text-white' : 'bg-[#3B6BF5] text-white'
+                  className={`max-w-full rounded-[2rem] px-6 py-3.5 sm:rounded-full sm:px-9 sm:py-5 ${
+                    isYou ? 'bg-white/[0.09] text-white' : 'bg-[#3B6BF5] text-white'
                   }`}
                   style={{
-                    fontSize: 'clamp(1.5rem, 5.2vw, 4rem)',
-                    lineHeight: 1.06,
+                    fontSize: 'clamp(1.15rem, 3vw, 2.1rem)',
+                    lineHeight: 1.18,
                     letterSpacing: '-0.02em',
                   }}
                 >
