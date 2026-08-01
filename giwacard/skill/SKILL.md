@@ -176,8 +176,10 @@ signature, no transaction and no gas.
 4. **`mint_card`** with `amount` = `maxAmountRequired`, `merchant` = `payTo`, and a
    short `expires_in_seconds` (300 is plenty for an inline API call — a shorter
    card locks the owner's escrow for less time if the payment never happens).
-5. **Re-request the resource with the payment header.** `X-PAYMENT` is the base64
-   of this JSON, and it contains nothing secret:
+5. **Present the card.** Call `pay_merchant` with the `url` and that `card_id`;
+   it sends the `X-PAYMENT` header for you. Build the header yourself only if
+   something outside this server has to make the request — it is the base64 of
+   this JSON, and it contains nothing secret:
 
    ```json
    {
@@ -219,8 +221,9 @@ which is cheaper than minting a card you did not intend.
    and that they must approve it with `giwacard approve` or in the dashboard.
    Give them the `approval_id`.
 3. Do something else. Come back and `check_approval_status` later.
-4. `approved` → you also get `card_id`. Continue from step 5 of the payment
-   workflow.
+4. `approved` → you also get `card_id`. Spend it with `pay_merchant`, passing
+   both the `url` and that `card_id` so it presents the approved card instead of
+   minting a new one.
    `denied` / `expired` → **terminal**. Do not re-file the same request. Tell the
    user and stop. Re-asking after a denial is the behaviour the two-tier model
    exists to prevent.

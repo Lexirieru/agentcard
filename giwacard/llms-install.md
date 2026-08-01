@@ -11,6 +11,10 @@ You are installing two things:
 2. the `giwacard` skill — `skill/SKILL.md` in this package, which teaches an agent
    how to use the seven tools.
 
+Both this runbook and `skill/SKILL.md` are listed in `package.json`'s `files`, so
+they are inside the published tarball: after `npm install giwacard` you can read
+them from `node_modules/giwacard/` without cloning anything.
+
 Time budget:
 
 | Step | Who | Minutes |
@@ -347,7 +351,10 @@ workflow spells the exchange out step by step for when you need the parts apart.
 | `RATE_LIMITED` with `scope: "rpc"`, or intermittent `RPC_UNAVAILABLE` | The public GIWA Sepolia RPC is rate-limited and documented as dev-only. | Set `GIWACARD_RPC_URL` to a dedicated endpoint in both the shell and the `mcpServers` env block. The clients already retry with backoff; a dedicated RPC is the real fix. |
 | `RATE_LIMITED` with `scope: "approvals"` | More than 20 over-policy requests from one session key in an hour. | Wait `details.retryAfterMs`. Better: size cards to fit the policy so they never queue. |
 | `RPC_UNAVAILABLE`: "the local giwacard approval daemon is unavailable" | The daemon could not be auto-started. | Run `giwacard daemon` in a terminal and read its output. It binds `127.0.0.1:47612`, writes `~/.giwacard/daemon.json` (port/pid) and `~/.giwacard/daemon-token` (mode 0600). Only over-policy flows need it; in-policy mints do not. |
-| Daemon exits with "needs an embedded SQLite driver and found none" | Node older than 22.5 and no Bun. | Upgrade Node to 22.5+, or run the daemon under Bun. |
+| Daemon exits with "needs an embedded SQLite driver and found none" | Node older than 22.5 and no Bun. The message names both the version required and the version running. | Upgrade Node to 22.5+, or run the daemon under Bun. `engines.node` refuses the install below 22.5.0, so this only bites a runtime that ignored it. |
+| The host lists no `giwacard` server, but the wizard said it succeeded | The wizard configured the *other* Claude. Claude Code reads `.mcp.json` in the project root; Claude Desktop reads `claude_desktop_config.json`. | Re-read the wizard's "Wrote the giwacard MCP server entry for … to …" line, then re-run `giwacard init --fresh --host claude-code` (or `--host claude-desktop`) for the product you actually use. |
+| `giwacard init --host claude` fails with "ambiguous" | Deliberate. `claude` names two products with two different config files, and guessing produced the row above. | Pass `--host claude-code` or `--host claude-desktop`. Nothing was written. |
+| `pay_merchant` returns `INVALID_REQUEST` naming a different vault | The merchant advertised a `CardVault` that is not yours, so a card from your vault could not be charged there. | Nothing was minted and nothing was spent. Check `GIWACARD_VAULT_ADDRESS` against the merchant's `extra.vault`; do not present a card to that merchant. |
 | First `mint_card` returns `MERCHANT_OUT_OF_SCOPE` | The merchant is not in the onchain allowlist — the deny-by-default trap. Adding it to `GIWACARD_MERCHANTS` does **not** change the allowlist; that variable only affects what `get_policy` reports. | The owner must register it onchain. Re-run `giwacard init --fresh` with `GIWACARD_MERCHANT_ADDRESS` set so step 7 runs `registerSessionKey` again with the merchant included. |
 | `SESSION_KEY_REVOKED` | The owner revoked the key, or the MCP server's `GIWACARD_VAULT_OWNER` does not match the owner who registered it. | Check `GIWACARD_VAULT_OWNER` against the owner address `giwacard status` prints. Re-register with `giwacard init`. |
 | `INSUFFICIENT_AVAILABLE_BALANCE` on a small card | Earlier cards are still escrowing their caps. `available` is `balance - escrowed`, not `balance`. | `giwacard status` lists active cards. Cancel one (`giwacard revoke card ID`), or wait for expiry. |
