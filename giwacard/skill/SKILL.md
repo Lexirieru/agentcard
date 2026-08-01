@@ -70,7 +70,7 @@ Two traps in that table:
 
 ## Tool surface
 
-Six tools. There is nothing else, and nothing hidden.
+Seven tools. There is nothing else, and nothing hidden.
 
 | Tool | Input | Returns |
 | --- | --- | --- |
@@ -80,6 +80,7 @@ Six tools. There is nothing else, and nothing hidden.
 | `get_card_status` | `card_id` (decimal string) | `status`, `chargeable`, `expired`, `amount`, `merchant`, `token`, `expires_at` |
 | `check_approval_status` | `approval_id` | `status` (`pending` / `denied` / `expired` / `approved`), the requested `amount` / `merchant` / `expires_at`, and once approved `card_id` + `mint_tx_hash` |
 | `cancel_card` | `card_id` | `status: "revoked"`, `released`, `cancel_tx_hash` |
+| `pay_merchant` | `url` (absolute URL of the paid resource), `card_id` (optional — present an existing card instead of minting), `max_amount` (optional ceiling in base units), `expires_in_seconds` (optional) | the merchant's response plus the settlement receipt; or `status: "approval_required"` with an `approval_id` when the price is over policy |
 
 Every result carries `ok: true` plus the fields above, or `ok: false` with
 `error: {code, message, retryable, details}`. Amounts and card ids are **decimal
@@ -193,12 +194,21 @@ signature, no transaction and no gas.
 6. **Confirm.** `get_card_status` should now report `status: "used"` and
    `chargeable: false`. The unspent remainder is back in `available`.
 
-**Honest limitation:** the MCP surface has no payment tool. The package contains
-an internal `payMerchant` used by tests and by future surfaces, but it is not
-registered as a tool in this build, so step 5 is an ordinary HTTP request made by
-you or your host, not a `giwacard` tool call. If your host cannot make HTTP
-requests, you can mint the card and hand the `card_id` to whatever can — that is
-safe, because the card is chargeable only by the merchant it names.
+**Shortcut: `pay_merchant` does all six steps.** Give it the `url` and it reads
+the price, checks the vault and chain match, mints a card for exactly that price,
+presents it, and returns the product with the settlement receipt. Prefer it: it
+is one call instead of six, and the payment header is assembled inside the server
+rather than by you.
+
+Use the long form above when you need the steps apart — to inspect a price before
+committing, or to pay with a card an owner approval already produced (pass it as
+`card_id`).
+
+`pay_merchant` obeys the same policy fork as `mint_card`. If the merchant's price
+is over policy it mints nothing, pays nothing, and returns an `approval_id`; carry
+on from the over-policy workflow below. Set `max_amount` when you have a ceiling
+in mind — the call then fails without minting if the merchant asks for more,
+which is cheaper than minting a card you did not intend.
 
 ### The request was over policy
 
@@ -288,7 +298,7 @@ message text. `retryable: true` means retrying the identical call could succeed.
 | --- | --- | --- | --- |
 | `NOT_CONFIGURED` | no | The MCP server has no vault address, vault owner, or keystore passphrase, or the passphrase is wrong. The `details.variable` names the missing environment variable. | Stop. Tell the user to run `giwacard init` and to make sure the named variable is set in the environment their agent host launches from. No amount of retrying fixes this. |
 | `SESSION_KEY_REVOKED` | no | The owner revoked this session key, or it was never registered. Terminal until re-registered. | Stop retrying. Tell the user to run `giwacard init` (or re-register the key). Cards already minted by this key stay valid. |
-| `NO_GAS` | yes | The session key holds no ETH on GIWA Sepolia and cannot pay for a transaction. | Ask the user to top the session key up with testnet ETH (GIWA faucet: https://docs.giwa.io/faucets), then retry. Note: the tool message suggests `giwacard faucet`, which claims **gUSD**, not ETH — the ETH faucet is a web page. |
+| `NO_GAS` | yes | The session key holds no ETH on GIWA Sepolia and cannot pay for a transaction. | Ask the user to top the session key up with testnet ETH from the GIWA web faucet (https://docs.giwa.io/faucets), then retry. `giwacard faucet` will not help — it claims gUSD, the money, not the gas. |
 | `INSUFFICIENT_AVAILABLE_BALANCE` | no | `available` cannot cover the requested cap. `details` carries `available` and `required`, in base units. | Mint a smaller card, `cancel_card` an unused one to free escrow, or ask the owner to deposit. Do **not** file an approval request — approval does not create funds. |
 | `MERCHANT_OUT_OF_SCOPE` | no | On a mint: the merchant is not on your allowlist. On a payment: the card is scoped to a different merchant and nothing was charged. | Mint case: ask the owner to allow that merchant; a bigger cap will not help. Payment case: present the card at the merchant it was minted for, or mint a new card for this one. |
 | `CARD_ALREADY_USED` | no | The card was charged. A card is chargeable exactly once. Terminal. | Mint a new card. Never retry the presentation. |
@@ -300,7 +310,7 @@ message text. `retryable: true` means retrying the identical call could succeed.
 | `APPROVAL_DENIED` | no | The owner refused. Terminal. `details.approvalId` identifies it. | Tell the user, including any note the owner left. Do not re-file the same request. |
 | `APPROVAL_EXPIRED` | no | The request passed its TTL (24 hours by default) undecided. Terminal. No funds moved. | If the card is still needed, file a new request with a *different* `idempotency_key`, and consider whether it needs to be over policy at all. |
 | `APPROVAL_NOT_FOUND` | no | No request with that `approval_id`. It was filed against a different vault, or the local daemon's database was reset. | Do not guess ids. Ask the user to check `giwacard status` or the dashboard for pending requests. |
-| `OWNER_ACTION_REQUIRED` | no | Only the vault owner can do this. Reached by `cancel_card` on a server without owner actions enabled. | Report it and hand the user the command: `giwacard revoke card CARD_ID`, or the dashboard. Note: the tool message may say `giwacard cancel`, which is not a real command. |
+| `OWNER_ACTION_REQUIRED` | no | Only the vault owner can do this. Reached by `cancel_card` on a server without owner actions enabled. | Report it and hand the user the command: `giwacard revoke card CARD_ID`, or the dashboard. |
 | `RATE_LIMITED` | yes | Too many over-policy requests from this session key (default 20 per hour), or the RPC is throttling this client. `details.retryAfterMs` says how long, `details.scope` says which. | Wait the stated interval. If `scope` is `approvals`, prefer keeping the next card inside policy over waiting. |
 | `RPC_UNAVAILABLE` | usually yes | The safe generic: any RPC failure, an unreachable or failing local approval daemon, an unreachable merchant, or a merchant whose own settlement failed. Also used when a merchant settled but could not prove it moved the right funds — that variant is **not** retryable. | Read `retryable`. If true, retry once in a few seconds. If the message mentions the local daemon, ask the user to run `giwacard daemon`. If the message says the merchant could not verify its settlement, call `get_card_status` before presenting anything else. |
 

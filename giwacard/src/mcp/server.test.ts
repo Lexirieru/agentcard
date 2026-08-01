@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/client'
 import { InMemoryTransport } from '@modelcontextprotocol/server'
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { EventEmitter } from 'node:events'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,7 +19,9 @@ import { McpToolError } from './errors.js'
 import {
   createContextFromEnv,
   createGiwaCardMcpServer,
+  runMcpCommand,
   type McpEnv,
+  type StdinEndSource,
 } from './server.js'
 
 /**
@@ -280,6 +283,133 @@ describe('daemon auto-start', () => {
     expect(
       JSON.parse((result.content as { text: string }[])[0]?.text ?? '{}'),
     ).toMatchObject({ ok: false, error: { code: 'APPROVAL_NOT_FOUND' } })
+  })
+})
+
+/* -------------------------------------------------------------------------- */
+/* Shutdown                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/** A transport that never closes itself, standing in for the stdio one. */
+function silentTransport(): Parameters<
+  ReturnType<typeof createGiwaCardMcpServer>['connect']
+> [0] {
+  return {
+    async start() {},
+    async send() {},
+    async close() {},
+  } as never
+}
+
+/** Collects stderr without writing anywhere. */
+function captureStderr(): NodeJS.WritableStream & { text: string } {
+  const sink = {
+    text: '',
+    write(chunk: string) {
+      sink.text += chunk
+      return true
+    },
+  }
+  return sink as unknown as NodeJS.WritableStream & { text: string }
+}
+
+/**
+ * Wait until the server has finished connecting.
+ *
+ * The readiness line is written immediately after `connect()` resolves and
+ * immediately before the shutdown listeners are attached, so it is the signal
+ * that a host would have to see before hanging up.
+ */
+async function waitUntilReady(stderr: { text: string }): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    if (stderr.text.includes('ready on stdio')) return
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+  throw new Error('the MCP server never reported ready')
+}
+
+describe('giwacard mcp shutdown', () => {
+  /**
+   * The regression: `StdioServerTransport` subscribes to stdin's `data` and
+   * `error` events and nothing else, so `transport.onclose` never fires at EOF.
+   * Waiting only on it left the awaited promise unsettled — the event loop
+   * drained, the top-level await in `cli.ts` never resolved, and the process
+   * died with exit code 13 and an unsettled-top-level-await warning, on the
+   * ordinary path where a host closes the pipe.
+   */
+  test('a closed stdin ends the command with exit code 0', async () => {
+    const stdin = new EventEmitter() as EventEmitter & StdinEndSource
+    const stderr = captureStderr()
+
+    const running = runMcpCommand({
+      env: {} as McpEnv,
+      transport: silentTransport(),
+      stderr,
+      stdin,
+    })
+
+    // Let the server come up, exactly as a host would before hanging up.
+    await waitUntilReady(stderr)
+    stdin.emit('end')
+
+    expect(await running).toBe(0)
+  })
+
+  test('stdin that already ended before the listeners went on still exits', async () => {
+    // `connect()` is awaited, so EOF can be emitted before the listeners
+    // attach. Without the post-attach check the server would hang for exactly
+    // the case the listeners exist to handle.
+    const ended: StdinEndSource = {
+      on() {},
+      off() {},
+      readableEnded: true,
+    }
+
+    expect(
+      await runMcpCommand({
+        env: {} as McpEnv,
+        transport: silentTransport(),
+        stderr: captureStderr(),
+        stdin: ended,
+      }),
+    ).toBe(0)
+  })
+
+  test('the transport closing still ends the command', async () => {
+    // The other shutdown path, unchanged: a host that closes the connection
+    // rather than the pipe.
+    const transport = silentTransport() as { onclose?: () => void }
+    const stderr = captureStderr()
+    const running = runMcpCommand({
+      env: {} as McpEnv,
+      transport: transport as never,
+      stderr,
+      // No stdin: a caller with its own transport is not on the process pipes.
+    })
+
+    await waitUntilReady(stderr)
+    transport.onclose?.()
+    expect(await running).toBe(0)
+  })
+
+  test('a transport that refuses to start reports 1, not a crash', async () => {
+    const failing = {
+      async start() {
+        throw new Error('pipe is gone')
+      },
+      async send() {},
+      async close() {},
+    }
+    const stderr = captureStderr()
+
+    expect(
+      await runMcpCommand({
+        env: {} as McpEnv,
+        transport: failing as never,
+        stderr,
+      }),
+    ).toBe(1)
+    expect(stderr.text).toContain('failed to start')
   })
 })
 

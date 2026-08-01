@@ -9,7 +9,7 @@ You are installing two things:
 1. `giwacard` — a CLI (for the human) and an MCP server (for the agent), one npm
    package, one binary.
 2. the `giwacard` skill — `skill/SKILL.md` in this package, which teaches an agent
-   how to use the six tools.
+   how to use the seven tools.
 
 Time budget:
 
@@ -26,12 +26,13 @@ Time budget:
 
 ## 0. Prerequisites — read before starting
 
-**Runtime.** `package.json` declares `engines.node: ">=20"`, and that is true of
-the CLI and the MCP server. It is **not** enough for the approval daemon: the
-daemon stores its queue in SQLite and loads `bun:sqlite` or Node's built-in
-`node:sqlite`, which only exists on **Node 22.5 or newer**. On Node 20 or 21 with
+**Runtime.** `package.json` declares `engines.node: ">=22.5.0"`. The CLI and the
+MCP server alone would run on Node 20, but the approval daemon would not: it
+stores its queue in SQLite and loads `bun:sqlite` or Node's built-in
+`node:sqlite`, which only exists on **Node 22.5 or newer**. On an older Node with
 no Bun present, in-policy card minting works and the over-policy approval flow
-fails with `SqliteUnavailableError`.
+fails with `SqliteUnavailableError`, which names both the version required and
+the version running.
 
 ```sh
 node --version   # want v22.5.0 or newer; v20 works for in-policy mints only
@@ -120,10 +121,22 @@ picks up at the first unfinished step.
 | 5 | gUSD faucet | Calls `claimFaucet()` — 100 gUSD. |
 | 6 | Session key | Generates the agent's session key and funds its gas from the owner wallet; prints the per-submitter gas budget. |
 | 7 | Policy + allowlist | `registerSessionKey` with the default policy **and the merchant allowlist in the same transaction**. |
-| 8 | Agent host config | Writes an `mcpServers` entry into the chosen host's config file (merging, never clobbering). |
+| 8 | Agent host config | Writes an `mcpServers` entry into the chosen host's config file (merging, never clobbering), and prints the path it wrote. |
 
-Useful flags: `--yes` (accept defaults, no prompts where avoidable), `--host
-claude|cursor|gemini`, `--fresh` (ignore recorded progress and re-run every step).
+Useful flags: `--yes` (accept defaults, no prompts where avoidable), `--fresh`
+(ignore recorded progress and re-run every step), and `--host`, which takes one
+of four ids:
+
+| `--host` | File it writes |
+| --- | --- |
+| `claude-code` | `.mcp.json` in the directory `giwacard init` was run from. **The default under `--yes`.** |
+| `claude-desktop` | `claude_desktop_config.json` in Claude Desktop's application directory |
+| `cursor` | `~/.cursor/mcp.json` |
+| `gemini` | `~/.gemini/settings.json` |
+
+`--host claude` is **refused**, with both Claude ids printed. Claude Code and
+Claude Desktop are different products reading different files, and a wizard that
+guesses reports success while configuring a host the user is not running.
 
 Default policy registered by step 7:
 
@@ -159,14 +172,15 @@ allowlisted merchant.
 
 ## 4. Register the MCP server with the agent host
 
-All three hosts use the same `mcpServers` object; only the file location differs.
-Step 8 of the wizard writes one of them for you — **including Claude *Desktop*,
-which is a different file from Claude *Code***. Write the file yourself if the
-host you actually use was not configured.
+All four hosts use the same `mcpServers` object; only the file location differs.
+Step 8 of the wizard writes exactly one of them and **prints the path**, so read
+that line: Claude Code and Claude Desktop are separate choices, and the wizard
+configures the one that was asked for and no other. Write the file yourself if
+the host you actually use was not the one configured.
 
 | Host | File |
 | --- | --- |
-| Claude Code | `.mcp.json` in the project root |
+| Claude Code | `.mcp.json` in the project root — what `giwacard init --yes` writes |
 | Claude Desktop | macOS `~/Library/Application Support/Claude/claude_desktop_config.json`; Windows `%APPDATA%\Claude\claude_desktop_config.json`; Linux `~/.config/Claude/claude_desktop_config.json` |
 | Cursor | `~/.cursor/mcp.json` |
 | Gemini CLI | `~/.gemini/settings.json` |
@@ -237,28 +251,29 @@ Then reload: restart Claude Desktop; Cursor reloads from Settings → MCP; the n
 **5a — the server starts.** Independent of any host:
 
 ```sh
-giwacard mcp >/dev/null 2>/tmp/giwacard-mcp.log &
-MCP_PID=$!
-sleep 2
-kill $MCP_PID
+giwacard mcp </dev/null >/dev/null 2>/tmp/giwacard-mcp.log
+echo "exit: $?"
 cat /tmp/giwacard-mcp.log
 ```
 
-Expect the first line to be `giwacard mcp v0.0.1 ready on stdio`. It is on
-**stderr** by design: stdout is the JSON-RPC channel and a single stray byte there
-drops the host connection. A trailing `Detected unsettled top-level await` warning
-after the kill is harmless and only appears in this manual smoke test.
+Expect `exit: 0` and one line, `giwacard mcp v0.0.1 ready on stdio`.
 
-**5b — the host sees exactly six tools.** In your host's MCP panel (`/mcp` in
+Both halves matter. The line is on **stderr** by design: stdout is the JSON-RPC
+channel and a single stray byte there drops the host connection. And closing
+stdin is how a host shuts the server down, so it must exit `0` — an earlier build
+exited `13` with a `Detected unsettled top-level await` warning here, which is
+what a crash looks like to anything watching.
+
+**5b — the host sees exactly seven tools.** In your host's MCP panel (`/mcp` in
 Claude Code), the `giwacard` server should be connected and advertise:
 
 ```
-mint_card   get_card_status   cancel_card   get_balance   get_policy   check_approval_status
+mint_card   pay_merchant   get_card_status   cancel_card   get_balance   get_policy   check_approval_status
 ```
 
-Six, no more. If you see a seventh — anything that resolves, approves or denies an
-approval — something is wrong with your install; that tool does not exist in this
-product and a test asserts its absence.
+Seven, no more. If you see one that resolves, approves or denies an approval,
+something is wrong with your install: no such tool exists in this product, and a
+test asserts its absence against the live tool list.
 
 **5c — a read-only tool answers.** Call `get_policy`. Expect:
 
@@ -308,12 +323,15 @@ reports `escrowed: "1000000"` and `available: "99000000"`.
 **The install is done.** The card is real: it can be charged once, by that
 merchant only, for at most 1 gUSD, until it expires.
 
-Optional next step — spend it against the demo merchant (`merchant/`, default
-`http://localhost:4021/insights`, 1 gUSD per request): request the resource, read
-the `402`, then re-request with an `X-PAYMENT` header naming the card. The skill's
-"Pay a paid API or merchant, end to end" workflow has the exact header. Note that
-the MCP surface has **no payment tool** — presenting a card is a plain HTTP
-request, and the merchant is the party that charges it.
+Optional next step — spend against the demo merchant (`merchant/`, default
+`http://localhost:4021/insights`, 1 gUSD per request). Call `pay_merchant` with
+that URL and it does the whole exchange: reads the `402`, mints a card for the
+quoted price, presents it, and returns the report with the settlement receipt.
+Pass the `card_id` you just minted to spend that card instead of a new one.
+
+The merchant is the party that charges the card — `pay_merchant` presents it and
+submits nothing onchain. The skill's "Pay a paid API or merchant, end to end"
+workflow spells the exchange out step by step for when you need the parts apart.
 
 ---
 
@@ -325,12 +343,12 @@ request, and the merchant is the party that charges it.
 | `NOT_CONFIGURED`: "the giwacard keystore could not be opened" | `GIWACARD_PASSPHRASE` is missing or wrong, or `giwacard init` never ran. | Export the passphrase in the environment the host launches from, or re-run `giwacard init`. |
 | `giwacard faucet` fails with a cooldown message | `GUSD.claimFaucet` is once per address per 24 h. The CLI reads the cooldown *before* submitting, so you are not paying gas to be refused. | The message says when it unlocks. Wait, or use a different owner address. The vault only needs enough gUSD to back your cards — 1 gUSD is enough to test. |
 | Step 4 of the wizard polls forever | The ETH faucet is a web page and nobody claimed. | The human must open https://docs.giwa.io/faucets and claim for the owner address the wizard printed. The poll times out after 10 minutes; re-running `giwacard init` resumes at the same step. |
-| `NO_GAS` | The session key has no ETH. | Send testnet ETH to the session key address (`get_policy` reports it as `session_key`), or re-run `giwacard init`, whose step 6 tops it up from the owner wallet. Note the error text suggests `giwacard faucet`, which claims **gUSD**, not ETH. |
+| `NO_GAS` | The session key has no ETH. | Send testnet ETH to the session key address (`get_policy` reports it as `session_key`), or re-run `giwacard init`, whose step 6 tops it up from the owner wallet. `giwacard faucet` claims gUSD, not gas, so it will not help here. |
 | `RATE_LIMITED` with `scope: "rpc"`, or intermittent `RPC_UNAVAILABLE` | The public GIWA Sepolia RPC is rate-limited and documented as dev-only. | Set `GIWACARD_RPC_URL` to a dedicated endpoint in both the shell and the `mcpServers` env block. The clients already retry with backoff; a dedicated RPC is the real fix. |
 | `RATE_LIMITED` with `scope: "approvals"` | More than 20 over-policy requests from one session key in an hour. | Wait `details.retryAfterMs`. Better: size cards to fit the policy so they never queue. |
 | `RPC_UNAVAILABLE`: "the local giwacard approval daemon is unavailable" | The daemon could not be auto-started. | Run `giwacard daemon` in a terminal and read its output. It binds `127.0.0.1:47612`, writes `~/.giwacard/daemon.json` (port/pid) and `~/.giwacard/daemon-token` (mode 0600). Only over-policy flows need it; in-policy mints do not. |
 | Daemon exits with "needs an embedded SQLite driver and found none" | Node older than 22.5 and no Bun. | Upgrade Node to 22.5+, or run the daemon under Bun. |
-| First `mint_card` returns `MERCHANT_OUT_OF_SCOPE` | The merchant is not in the onchain allowlist — the deny-by-default trap. Adding it to `GIWACARD_MERCHANTS` does **not** change the allowlist; that variable only affects what `get_policy` reports. | The owner must register it onchain. Re-run `giwacard init --fresh` with `GIWACARD_MERCHANT_ADDRESS` set so step 7 runs `registerSessionKey` again with the merchant included. (The error text suggests `giwacard merchants add`; that command does not exist in this build.) |
+| First `mint_card` returns `MERCHANT_OUT_OF_SCOPE` | The merchant is not in the onchain allowlist — the deny-by-default trap. Adding it to `GIWACARD_MERCHANTS` does **not** change the allowlist; that variable only affects what `get_policy` reports. | The owner must register it onchain. Re-run `giwacard init --fresh` with `GIWACARD_MERCHANT_ADDRESS` set so step 7 runs `registerSessionKey` again with the merchant included. |
 | `SESSION_KEY_REVOKED` | The owner revoked the key, or the MCP server's `GIWACARD_VAULT_OWNER` does not match the owner who registered it. | Check `GIWACARD_VAULT_OWNER` against the owner address `giwacard status` prints. Re-register with `giwacard init`. |
 | `INSUFFICIENT_AVAILABLE_BALANCE` on a small card | Earlier cards are still escrowing their caps. `available` is `balance - escrowed`, not `balance`. | `giwacard status` lists active cards. Cancel one (`giwacard revoke card ID`), or wait for expiry. |
 | Host shows the server as failed with no message | Something wrote to stdout on the MCP path and corrupted the JSON-RPC stream. | Check the host's MCP log. Nothing under `giwacard mcp` may print to stdout; diagnostics go to stderr. |
