@@ -13,10 +13,10 @@ execution: code
 
 ## Goal Capsule
 
-- **Objective:** Memenangkan grant GASOK dengan membangun infrastruktur pembayaran crypto-native untuk AI agent di GIWA Sepolia (chain ID 91342), terinspirasi model agentcard.sh.
-- **Product authority:** Lexirieru (owner repo). Arah produk dikonfirmasi 2026-08-01: kartu sekali-pakai onchain + merchant pertama berupa paid API bergaya x402.
+- **Objective:** Win the GASOK grant by building crypto-native payment infrastructure for AI agents on GIWA Sepolia (chain ID 91342), inspired by the agentcard.sh model.
+- **Product authority:** Lexirieru (repo owner). Product direction confirmed 2026-08-01: one-time onchain cards + a first merchant in the form of an x402-style paid API.
 - **Open blockers:**
-  - Deadline extended GASOK (31 Juli 2026) sudah lewat; halaman belum menyatakan closed. Submit aplikasi secepatnya atau kontak email resmi di halaman gasok.
+  - The extended GASOK deadline (31 July 2026) has already passed; the page does not yet state that it is closed. Submit the application as soon as possible, or contact the official email on the gasok page.
 
 ---
 
@@ -24,169 +24,169 @@ execution: code
 
 ### Summary
 
-GiwaCard memberi AI agent kemampuan membayar secara aman di GIWA Sepolia: owner mendanai smart account miliknya sendiri, agent mencetak "kartu" sekali-pakai berbatas nominal, scope, dan expiry lewat MCP + skill, dan transaksi di luar policy tertahan sampai owner menyetujui di dashboard. Loop demo ditutup oleh merchant pertama berupa paid API bergaya x402 yang menagih per-request ke kartu tersebut.
+GiwaCard gives AI agents the ability to pay safely on GIWA Sepolia: the owner funds a smart account they own themselves, the agent mints one-time "cards" bounded by an amount cap, scope, and expiry through MCP + skill, and transactions outside policy are held until the owner approves them in the dashboard. The demo loop is closed by a first merchant in the form of an x402-style paid API that charges per request against that card.
 
 ### Problem Frame
 
-AI agent makin sering diminta menyelesaikan alur kerja yang berujung pembayaran, tapi memberi agent akses penuh ke dompet adalah risiko yang tidak bisa diterima — satu kesalahan model atau prompt injection bisa menguras dana. agentcard.sh membuktikan solusinya di dunia fiat: kartu virtual sekali-pakai dengan cap, scope, dan approval manusia. Namun produk itu custodial dan sangat US-centric (Visa, Apple Pay, KYC scan wajah, alamat billing hardcoded San Francisco) sehingga tidak bisa dipakai komunitas crypto global.
+AI agents are increasingly asked to complete workflows that end in a payment, but giving an agent full access to a wallet is an unacceptable risk — a single model mistake or prompt injection can drain the funds. agentcard.sh proved the solution in the fiat world: one-time virtual cards with caps, scope, and human approval. That product, however, is custodial and heavily US-centric (Visa, Apple Pay, face-scan KYC, a hardcoded San Francisco billing address), so the global crypto community cannot use it.
 
-Di sisi lain, GIWA — L2 OP Stack milik ekosistem Upbit — sedang mencari aplikasi native lewat program GASOK, dan belum ada infrastruktur pembayaran agent apa pun di chain tersebut. Bahan bakunya justru sudah tersedia di genesis: EntryPoint ERC-4337 v0.6/v0.7, Safe, Permit2, preconfirmation Flashblocks ~200ms, dan identitas up.id.
+On the other side, GIWA — the OP Stack L2 belonging to the Upbit ecosystem — is looking for native applications through the GASOK program, and there is not yet any agent payment infrastructure at all on that chain. The raw materials are in fact already available at genesis: ERC-4337 EntryPoint v0.6/v0.7, Safe, Permit2, Flashblocks preconfirmation at ~200ms, and up.id identity.
 
 ### Key Decisions
 
-- **Non-custodial.** Dana tinggal di smart account milik owner; sistem tidak pernah memegang kunci atau saldo pengguna. Pembeda tajam dari agentcard.sh yang custodial, sekaligus menghapus kebutuhan KYC/compliance di testnet dan menjadi narasi keamanan utama untuk grant.
-- **Kartu = otorisasi belanja sekali-pakai onchain.** Terjemahan langsung dari "one-time virtual card": otorisasi dengan cap nominal, scope (token, merchant), dan expiry yang hangus setelah satu charge sukses. Kebocoran kredensial kartu menjadi tidak bernilai.
-- **Policy ditegakkan di kontrak, bukan di prompt.** Cap dan scope dienforce onchain sehingga agent yang salah atau disusupi tetap tidak bisa melebihi batas — prompt hanyalah lapisan sopan santun, kontrak adalah lapisan hukum.
-- **Consent dua tingkat.** Permintaan di luar policy menghasilkan pending approval yang diputuskan owner (pola 202/approve agentcard.sh); di sisi client, tool sensitif ditahan sampai konfirmasi eksplisit dengan signature call yang sama — meniru pola anti-prompt-injection dari imessage-agent-template.
-- **Packaging MCP server + skill.** Skill mengajarkan alur kerja dan aturan keselamatan; MCP server mengeksekusi. Pola onboarding <10 menit dari coding agent mana pun adalah fitur produk, bukan dokumentasi.
-- **Merchant pertama dibangun sendiri sebagai paid API bergaya x402.** Menghindari toko simulasi: demo end-to-end menghasilkan nilai nyata (agent membayar per-request untuk sebuah layanan) meski chain masih testnet-only.
-- **Testnet-first, sandbox-by-default.** GIWA Sepolia adalah target rilis; mainnet masuk roadmap grant (mainnet GIWA belum live). Meniru pola sandbox-default agentcard.sh.
-- **Kontrak upgradeable dan verified.** Semua kontrak inti memakai proxy upgradeable dan diverifikasi di Blockscout (sepolia-explorer.giwa.io) — constraint eksplisit dari owner.
-- **Strategi grant dobel track.** Daftar GASOK di track AI/Web3 (utama) dan GIWA-Native (Flashblocks, predeploy 4337, up.id sebagai fitur load-bearing); platform B2B dinarasikan sebagai roadmap Phase 3/4.
-- **Dua jalur pemakaian setara: for human dan for agent.** Human memakai CLI interaktif dan dashboard; agent memakai MCP + skill. Kemampuan inti (lihat kartu, approve, cek saldo) tersedia di kedua jalur. CLI adalah surface utama human; dashboard web minimal (approval + status).
-- **Stack tunggal TypeScript** untuk semua komponen non-kontrak (MCP SDK v2, viem, CLI berbasis clack + ASCII art); kontrak tetap Foundry/Solidity. `npx giwacard` adalah pintu masuk tunggal.
-- **Mekanisme kartu tanpa bundler ERC-4337.** Kartu = otorisasi EIP-712 sekali-pakai (pola Permit2 SignatureTransfer, nonce bitmap non-urut) yang ditegakkan vault escrow onchain; tidak ada dependensi bundler/paymaster. Kompatibilitas 4337 dibawa sebagai roadmap, bukan MVP.
-- **Fork kode MIT dari repo referensi agentcard.sh** (MCP server, skill, redaction, pola approval) dengan atribusi copyright dipertahankan; seluruh lapisan onchain ditulis baru.
-- **Settlement x402 memakai Permit2 yang sudah predeploy di genesis GIWA**; facilitator self-host menjadi bagian dari paid API demo — tanpa implementasi EIP-3009.
-- **MCP server berjalan stdio lokal via npx untuk MVP** — kunci sesi tidak pernah meninggalkan mesin owner; mode remote HTTP menjadi roadmap.
-- **State onchain adalah satu-satunya kebenaran.** Used-flag kartu di kontrak menentukan status final; preconfirmation Flashblocks dipakai untuk UX "instan", UI menandai transaksi pending sampai blok safe.
-- **Distribusi one-command.** Produk terinstal dari package registry publik dengan satu perintah (mis. `npx giwacard`); CLI-nya adalah pintu masuk onboarding, dengan ASCII art berkualitas tinggi sebagai identitas brand di terminal.
+- **Non-custodial.** Funds stay in the owner's smart account; the system never holds user keys or balances. A sharp differentiator from custodial agentcard.sh, which at the same time removes the need for KYC/compliance on testnet and becomes the main security narrative for the grant.
+- **A card = a one-time onchain spend authorization.** A direct translation of the "one-time virtual card": an authorization with an amount cap, scope (token, merchant), and expiry that is voided after one successful charge. A leak of card credentials becomes worthless.
+- **Policy is enforced in the contract, not in the prompt.** Caps and scope are enforced onchain so that a mistaken or compromised agent still cannot exceed the limits — the prompt is merely the layer of good manners, the contract is the layer of law.
+- **Two-tier consent.** Out-of-policy requests produce a pending approval that the owner decides on (agentcard.sh's 202/approve pattern); on the client side, sensitive tools are held until explicit confirmation with the same signature call — mirroring the anti-prompt-injection pattern from imessage-agent-template.
+- **Packaging as MCP server + skill.** The skill teaches the workflow and the safety rules; the MCP server executes. A <10-minute onboarding pattern from any coding agent is a product feature, not documentation.
+- **The first merchant is built in-house as an x402-style paid API.** This avoids a simulated store: the end-to-end demo produces real value (an agent paying per request for a service) even though the chain is still testnet-only.
+- **Testnet-first, sandbox-by-default.** GIWA Sepolia is the release target; mainnet goes on the grant roadmap (GIWA mainnet is not live yet). Mirrors agentcard.sh's sandbox-default pattern.
+- **Contracts are upgradeable and verified.** All core contracts use an upgradeable proxy and are verified on Blockscout (sepolia-explorer.giwa.io) — an explicit constraint from the owner.
+- **Dual-track grant strategy.** Register for GASOK on the AI/Web3 track (primary) and on GIWA-Native (Flashblocks, the 4337 predeploy, up.id as a load-bearing feature); the B2B platform is narrated as a Phase 3/4 roadmap.
+- **Two equal usage paths: for human and for agent.** Humans use the interactive CLI and the dashboard; agents use MCP + skill. The core capabilities (view cards, approve, check balance) are available on both paths. The CLI is the primary human surface; the web dashboard is minimal (approval + status).
+- **A single TypeScript stack** for all non-contract components (MCP SDK v2, viem, a clack-based CLI + ASCII art); contracts remain Foundry/Solidity. `npx giwacard` is the single entry point.
+- **Card mechanism without an ERC-4337 bundler.** A card = a one-time EIP-712 authorization (the Permit2 SignatureTransfer pattern, unordered nonce bitmap) enforced by an onchain escrow vault; there is no bundler/paymaster dependency. 4337 compatibility is carried as roadmap, not MVP.
+- **Fork the MIT-licensed code from the agentcard.sh reference repos** (MCP server, skill, redaction, approval patterns) with copyright attribution preserved; the entire onchain layer is written from scratch.
+- **x402 settlement uses Permit2, which is already predeployed in the GIWA genesis**; a self-hosted facilitator becomes part of the paid API demo — with no EIP-3009 implementation.
+- **The MCP server runs locally over stdio via npx for the MVP** — session keys never leave the owner's machine; remote HTTP mode becomes roadmap.
+- **Onchain state is the single source of truth.** A card's used flag in the contract determines the final status; Flashblocks preconfirmation is used for "instant" UX, and the UI marks transactions as pending until the safe block.
+- **One-command distribution.** The product installs from a public package registry with a single command (e.g. `npx giwacard`); its CLI is the onboarding entry point, with high-quality ASCII art as the brand identity in the terminal.
 
 ### Actors
 
-- A1. **Owner** — manusia pemilik dana; mendanai smart account, menetapkan policy, menyetujui/menolak permintaan di luar batas.
-- A2. **AI agent** — Claude Code / Cursor / Gemini CLI dsb. yang terhubung via MCP; meminta kartu dan membelanjakannya atas nama owner.
-- A3. **Merchant** — penerima pembayaran onchain; merchant pertama adalah paid API bergaya x402 yang dioperasikan proyek ini.
-- A4. **Dashboard** — surface web owner untuk saldo, kartu, approval, dan riwayat; diposisikan sebagai kandidat integrasi GIWA Wallet.
+- A1. **Owner** — the human who owns the funds; funds the smart account, sets the policy, approves/denies out-of-bounds requests.
+- A2. **AI agent** — Claude Code / Cursor / Gemini CLI and the like, connected over MCP; requests cards and spends them on the owner's behalf.
+- A3. **Merchant** — the recipient of the onchain payment; the first merchant is an x402-style paid API operated by this project.
+- A4. **Dashboard** — the owner's web surface for balance, cards, approvals, and history; positioned as a candidate for GIWA Wallet integration.
 
 ### Requirements
 
-**Inti onchain**
+**Onchain core**
 
-- R1. Owner memiliki smart account di GIWA Sepolia yang menampung test-stablecoin dan ETH untuk gas.
-- R2. Agent dapat meminta penerbitan kartu dengan cap nominal, token, scope merchant, dan expiry.
-- R3. Kartu bersifat sekali-pakai: hangus otomatis setelah satu charge sukses dan tidak dapat direplay.
-- R3b. Mint kartu meng-escrow cap dari saldo tersedia (saldo tersedia = saldo dikurangi total cap kartu aktif); saat kartu hangus — terpakai, expire, atau dibatalkan — sisa yang tidak ter-charge kembali tersedia otomatis.
-- R4. Cap dan scope ditegakkan di level kontrak sehingga tidak dapat dilampaui oleh agent mana pun.
-- R5. Permintaan di luar policy menghasilkan pending approval yang hanya bisa diresolve owner; tanpa persetujuan, tidak ada dana bergerak.
-- R5b. Pending approval kedaluwarsa otomatis setelah batas waktu ke status terminal yang deterministik, tanpa dana bergerak.
-- R6. Semua kontrak inti upgradeable dan terverifikasi di Blockscout GIWA Sepolia.
+- R1. The owner has a smart account on GIWA Sepolia that holds the test-stablecoin and ETH for gas.
+- R2. The agent can request the issuance of a card with an amount cap, token, merchant scope, and expiry.
+- R3. A card is one-time use: it is voided automatically after one successful charge and cannot be replayed.
+- R3b. Minting a card escrows the cap from the available balance (available balance = balance minus the total caps of active cards); when a card is voided — spent, expired, or cancelled — the uncharged remainder becomes available again automatically.
+- R4. Caps and scope are enforced at the contract level so that they cannot be exceeded by any agent.
+- R5. Out-of-policy requests produce a pending approval that only the owner can resolve; without approval, no funds move.
+- R5b. A pending approval expires automatically after a time limit into a deterministic terminal state, with no funds moving.
+- R6. All core contracts are upgradeable and verified on the GIWA Sepolia Blockscout.
 
-**Integrasi agent**
+**Agent integration**
 
-- R7. MCP server mengekspos tools untuk agent: mint kartu, lihat status kartu, batalkan kartu, baca saldo, baca policy, dan cek status approval miliknya — resolve approval TIDAK pernah tersedia lewat MCP (khusus owner via dashboard/CLI, selaras R5).
-- R8. Skill mendokumentasikan alur kerja, kosakata, dan aturan keselamatan agar agent memakai tools dengan benar.
-- R9. Coding agent baru dapat onboard (install MCP + skill sampai kartu pertama) dalam waktu di bawah 10 menit mengikuti runbook yang bisa dieksekusi mesin.
-- R10. Material rahasia (kunci sesi, kredensial kartu) tidak pernah masuk konteks model — diredaksi sebelum hasil tool dikembalikan.
-- R10b. Charge ke merchant dieksekusi di sisi server atas referensi kartu yang opaque; agent tidak pernah menerima material yang bisa ditandatangani.
+- R7. The MCP server exposes tools to the agent: mint a card, view card status, cancel a card, read the balance, read the policy, and check the status of its own approval requests — resolving an approval is NEVER available over MCP (owner-only via dashboard/CLI, consistent with R5).
+- R8. The skill documents the workflow, the vocabulary, and the safety rules so that the agent uses the tools correctly.
+- R9. A new coding agent can onboard (install MCP + skill through to the first card) in under 10 minutes by following a machine-executable runbook.
+- R10. Secret material (session keys, card credentials) never enters the model context — it is redacted before tool results are returned.
+- R10b. The charge to the merchant is executed server-side against an opaque card reference; the agent never receives material that can be signed.
 
-**Surface owner**
+**Owner surface**
 
-- R11. Dashboard menampilkan saldo, kartu aktif/hangus, antrean approval, dan riwayat transaksi.
-- R12. Owner dapat menyetujui atau menolak pending approval dalam maksimal dua interaksi dari dashboard.
-- R13. Alur approval dirancang mandiri dan ringkas sehingga layak diintegrasikan ke GIWA Wallet (kriteria seleksi GASOK).
+- R11. The dashboard shows the balance, active/voided cards, the approval queue, and transaction history.
+- R12. The owner can approve or deny a pending approval in at most two interactions from the dashboard.
+- R13. The approval flow is designed to be self-contained and compact so that it is viable to integrate into GIWA Wallet (a GASOK selection criterion).
 
-**Loop demo dan ekosistem**
+**Demo loop and ecosystem**
 
-- R14. Merchant pertama berupa paid API yang menagih per-request lewat kartu dan mengembalikan hasil bernilai nyata.
-- R15. Demo end-to-end berjalan dari prompt agent sampai hasil API diterima, dengan konfirmasi terasa instan via Flashblocks.
-- R16. Test-stablecoin di-deploy sendiri lengkap dengan faucet-nya (tidak ada test USDC kanonik di GIWA Sepolia).
+- R14. The first merchant is a paid API that charges per request through a card and returns a result of real value.
+- R15. The end-to-end demo runs from the agent prompt through to the API result being received, with confirmation that feels instant via Flashblocks.
+- R16. The test-stablecoin is deployed in-house, complete with its faucet (there is no canonical test USDC on GIWA Sepolia).
 
-**Distribusi dan CLI**
+**Distribution and CLI**
 
-- R19. Produk terinstal lewat satu perintah dari package registry publik (mis. `npx giwacard` atau setara di ekosistem stack terpilih).
-- R20. CLI interaktif untuk human mencakup onboarding (wizard), cek saldo/kartu, dan resolve approval — dengan ASCII art berkualitas tinggi dan interaksi yang halus sebagai identitas brand.
-- R21. Dokumentasi dan entry point terpisah "for human" (CLI + dashboard) dan "for agent" (MCP + skill), dengan kemampuan inti setara di keduanya.
+- R19. The product installs via a single command from a public package registry (e.g. `npx giwacard` or the equivalent in the chosen stack's ecosystem).
+- R20. The interactive CLI for humans covers onboarding (wizard), checking balance/cards, and resolving approvals — with high-quality ASCII art and smooth interaction as brand identity.
+- R21. Documentation and entry points are split into "for human" (CLI + dashboard) and "for agent" (MCP + skill), with equivalent core capabilities in both.
 
-**Deliverable grant**
+**Grant deliverables**
 
-- R17. Materi aplikasi GASOK memetakan produk ke enam kriteria Phase 1 (kecocokan GIWA, orisinalitas, feasibility, pasar, tim, potensi GIWA Wallet) untuk track AI/Web3 dan GIWA-Native.
-- R18. Repo publik dengan README yang mendemonstrasikan alur lengkap dan siap dijadikan bahan video demo.
+- R17. The GASOK application material maps the product to the six Phase 1 criteria (GIWA fit, originality, feasibility, market, team, GIWA Wallet potential) for both the AI/Web3 and GIWA-Native tracks.
+- R18. A public repo with a README that demonstrates the full flow and is ready to serve as demo video material.
 
 ### Key Flows
 
 ```mermaid
 flowchart TB
-  A[Agent butuh bayar layanan] --> B{Dalam policy?}
-  B -->|ya| C[Kartu sekali-pakai tercetak]
-  B -->|tidak| D[Pending approval ke owner]
+  A[Agent needs to pay for a service] --> B{Within policy?}
+  B -->|yes| C[One-time card minted]
+  B -->|no| D[Pending approval to owner]
   D -->|approve| C
-  D -->|deny| E[Tidak ada dana bergerak]
-  C --> F[Bayar merchant / paid API]
-  F --> G[Preconfirmation Flashblocks ~200ms]
-  G --> H[Kartu hangus otomatis]
+  D -->|deny| E[No funds move]
+  C --> F[Pay merchant / paid API]
+  F --> G[Flashblocks preconfirmation ~200ms]
+  G --> H[Card voided automatically]
 ```
 
-- F1. Onboarding owner
-  - **Trigger:** Owner baru ingin memakai GiwaCard.
+- F1. Owner onboarding
+  - **Trigger:** A new owner wants to use GiwaCard.
   - **Actors:** A1, A4
-  - **Steps:** Jalankan CLI satu perintah → wizard interaktif memandu: hubungkan wallet → siapkan smart account → isi gas dari faucet GIWA dan test-stablecoin dari faucet proyek → pasang MCP + skill di agent → set policy default.
-  - **Outcome:** Agent siap membelanjakan dana dalam batas policy.
-- F2. Belanja dalam policy
-  - **Trigger:** Agent perlu membayar merchant dan nominal berada dalam batas.
+  - **Steps:** Run the single-command CLI → an interactive wizard guides the way: connect wallet → set up the smart account → top up gas from the GIWA faucet and test-stablecoin from the project faucet → install MCP + skill in the agent → set the default policy.
+  - **Outcome:** The agent is ready to spend funds within the policy limits.
+- F2. Spending within policy
+  - **Trigger:** The agent needs to pay a merchant and the amount is within the limits.
   - **Actors:** A2, A3
-  - **Steps:** Agent minta kartu → kartu tercetak dengan cap/scope/expiry → agent membayar merchant → preconfirmation instan → kartu hangus.
+  - **Steps:** Agent requests a card → the card is minted with cap/scope/expiry → the agent pays the merchant → instant preconfirmation → the card is voided.
   - **Covers:** R2, R3, R4, R14, R15
-- F3. Approval di luar policy
-  - **Trigger:** Permintaan kartu melebihi cap atau di luar scope.
+- F3. Out-of-policy approval
+  - **Trigger:** A card request exceeds the cap or falls outside the scope.
   - **Actors:** A1, A2, A4
-  - **Steps:** Permintaan masuk antrean pending → owner menerima konteks lengkap di dashboard → approve/deny → jika approve, kartu tercetak dan alur lanjut seperti F2.
+  - **Steps:** The request enters the pending queue → the owner receives the full context in the dashboard → approve/deny → if approved, the card is minted and the flow continues as in F2.
   - **Covers:** R5, R11, R12
-- F4. Expiry dan pembatalan
-  - **Trigger:** Kartu tidak terpakai sampai expiry, atau owner membatalkan manual.
+- F4. Expiry and cancellation
+  - **Trigger:** A card goes unused until expiry, or the owner cancels it manually.
   - **Actors:** A1
-  - **Steps:** Kartu lewat expiry atau dibatalkan → status hangus → dana tetap utuh di smart account.
+  - **Steps:** The card passes its expiry or is cancelled → status becomes voided → the funds remain intact in the smart account.
   - **Covers:** R3, R4
 
 ### Acceptance Examples
 
-- AE1. **Covers R2, R3, R14.** Given kartu ber-cap 5 gUSD untuk merchant API, When API menagih 1 gUSD, Then pembayaran sukses, kartu hangus, dan charge kedua pada kartu yang sama ditolak.
-- AE2. **Covers R4, R5.** Given policy cap 10 gUSD, When agent meminta kartu 100 gUSD, Then tidak ada kartu tercetak; pending approval muncul di dashboard, dan setelah owner deny, saldo tidak berubah sama sekali.
-- AE3. **Covers R3.** Given kartu yang sudah dipakai, When siapa pun mencoba memakai ulang kredensialnya, Then transaksi ditolak di level kontrak.
-- AE4. **Covers R10.** Given agent menyelesaikan pembayaran, When transkrip sesi agent diperiksa, Then tidak ada kunci sesi atau kredensial kartu yang muncul di konteks model.
+- AE1. **Covers R2, R3, R14.** Given a card with a 5 gUSD cap for the API merchant, When the API charges 1 gUSD, Then the payment succeeds, the card is voided, and a second charge on the same card is rejected.
+- AE2. **Covers R4, R5.** Given a policy cap of 10 gUSD, When the agent requests a 100 gUSD card, Then no card is minted; a pending approval appears in the dashboard, and after the owner denies it, the balance does not change at all.
+- AE3. **Covers R3.** Given a card that has already been used, When anyone tries to reuse its credentials, Then the transaction is rejected at the contract level.
+- AE4. **Covers R10.** Given the agent completes a payment, When the agent's session transcript is inspected, Then no session key or card credential appears in the model context.
 
 ### Success Criteria
 
-- Demo end-to-end (F2 dan F3) berjalan di GIWA Sepolia tanpa intervensi manual di luar approval owner.
-- Semua kontrak inti tampil "Verified" di sepolia-explorer.giwa.io.
-- Coding agent yang belum pernah melihat proyek ini berhasil onboard sampai kartu pertama dalam <10 menit.
-- Aplikasi GASOK tersubmit dengan narasi yang memetakan produk ke keenam kriteria Phase 1.
+- The end-to-end demo (F2 and F3) runs on GIWA Sepolia with no manual intervention beyond the owner's approval.
+- All core contracts show as "Verified" on sepolia-explorer.giwa.io.
+- A coding agent that has never seen this project successfully onboards through to the first card in <10 minutes.
+- The GASOK application is submitted with a narrative that maps the product to all six Phase 1 criteria.
 
 ### Scope Boundaries
 
 **Deferred for later**
 
-- Platform issuing B2B multi-tenant (org menerbitkan kartu untuk agent user mereka) — narasi roadmap grant, bukan MVP.
-- Kanal approval di luar dashboard (bot Telegram, email, push).
-- Sponsorship gas / paymaster untuk owner tanpa ETH.
-- Program rewards (analogi TOKENBACK) dan integrasi up.id yang lebih dalam dari sekadar tampilan nama.
-- Deploy mainnet — menunggu GIWA mainnet live.
+- A multi-tenant B2B issuing platform (orgs issuing cards for their users' agents) — grant roadmap narrative, not MVP.
+- Approval channels outside the dashboard (Telegram bot, email, push).
+- Gas sponsorship / paymaster for owners without ETH.
+- A rewards program (analogous to TOKENBACK) and up.id integration deeper than merely displaying a name.
+- Mainnet deployment — waiting for GIWA mainnet to go live.
 
 **Outside this product's identity**
 
-- Rail fiat, kartu Visa, KYC, dan segala bentuk custodial balance.
-- Shopping intelligence ala tool `buy` DoorDash — agent membawa niat belanjanya sendiri; produk ini hanya rail pembayarannya.
+- Fiat rails, Visa cards, KYC, and every form of custodial balance.
+- DoorDash `buy`-tool-style shopping intelligence — the agent brings its own purchase intent; this product is only the payment rail.
 
 ### Dependencies / Assumptions
 
-- RPC publik GIWA Sepolia rate-limited dan dinyatakan tidak layak production — cukup untuk pengembangan; demo memakai retry/backoff dan RPC cadangan.
-- Nama package npm `giwacard` masih tersedia per 1 Agustus 2026 (registry 404) — perlu segera direserve sebelum rilis.
-- Repo referensi kunci berlisensi MIT (mcp, agent-card-skill, agentcard-mcp, imessage-agent-template); dua repo tanpa lisensi (gemini-extension, example-implementations) hanya boleh ditiru polanya.
-- **Asumsi:** aplikasi GASOK masih bisa disubmit meski deadline extended (31 Juli 2026) lewat — halaman belum menyatakan closed dan menerima aplikasi susulan selama Phase 2. Belum terverifikasi dari pihak GIWA.
-- Faucet ETH testnet dibatasi 0.005–0.01 ETH per 24 jam — jumlah wallet demo perlu memperhitungkan ini.
-- Klaim "agentcard.sh menang Y Combinator" tidak terverifikasi dari situsnya — jangan dipakai dalam materi aplikasi.
+- The public GIWA Sepolia RPC is rate-limited and declared not production-grade — sufficient for development; the demo uses retry/backoff and a fallback RPC.
+- The npm package name `giwacard` is still available as of 1 August 2026 (registry 404) — it needs to be reserved promptly, before release.
+- The key reference repos are MIT licensed (mcp, agent-card-skill, agentcard-mcp, imessage-agent-template); two repos without a license (gemini-extension, example-implementations) may only have their patterns imitated.
+- **Assumption:** the GASOK application can still be submitted even though the extended deadline (31 July 2026) has passed — the page does not yet state that it is closed and accepts late applications during Phase 2. Not yet verified with GIWA.
+- The testnet ETH faucet is limited to 0.005–0.01 ETH per 24 hours — the number of demo wallets needs to account for this.
+- The claim that "agentcard.sh won Y Combinator" is unverified from their site — do not use it in application material.
 
 ### Outstanding Questions
 
 **Deferred to planning**
 
-- Bentuk test-stablecoin (nama, decimals, mekanik faucet).
-- Jenis layanan paid API pertama yang paling demoable.
-- Hosting paid API demo (lokal vs hosted publik).
+- The form of the test-stablecoin (name, decimals, faucet mechanics).
+- Which kind of first paid API service is the most demoable.
+- Hosting for the paid API demo (local vs publicly hosted).
 
 ### Sources / Research
 
-- Repo referensi agentcard.sh (lokal, di-gitignore): `references/` pada checkout main — terutama `references/mcp/src/tools/` (pola 202/approval, limit), `references/agent-card-skill/SKILL.md` (kosakata + workflow skill), `references/imessage-agent-template/src/agent/agent.ts` (hold-until-confirm + redaction dua lapis), `references/agentcard-mcp/README.md` (packaging MCP remote + OAuth DCR).
-- GASOK: https://giwa.io/gasok — kriteria seleksi, track, struktur grant ($20k + bonus KPI $80k), timeline (Demoday Oktober 2026 di KBW).
-- Docs GIWA: https://docs.giwa.io (llms.txt sebagai indeks) — connect-to-giwa (RPC/chain ID), contracts (predeploy 4337/Safe/Permit2, WETH9), flashblocks (~200ms preconfirmation), faucets, panduan Foundry + verifikasi Blockscout, up.id.
-- Positioning agentcard.sh: https://www.agentcard.sh/ — "Card issuing for agent-first startups", onboarding 10 menit, MCP out of the box.
+- agentcard.sh reference repos (local, gitignored): `references/` on the main checkout — especially `references/mcp/src/tools/` (202/approval pattern, limits), `references/agent-card-skill/SKILL.md` (skill vocabulary + workflow), `references/imessage-agent-template/src/agent/agent.ts` (hold-until-confirm + two-layer redaction), `references/agentcard-mcp/README.md` (remote MCP packaging + OAuth DCR).
+- GASOK: https://giwa.io/gasok — selection criteria, tracks, grant structure ($20k + $80k KPI bonus), timeline (Demoday October 2026 at KBW).
+- GIWA docs: https://docs.giwa.io (llms.txt as the index) — connect-to-giwa (RPC/chain ID), contracts (4337/Safe/Permit2 predeploys, WETH9), flashblocks (~200ms preconfirmation), faucets, the Foundry guide + Blockscout verification, up.id.
+- agentcard.sh positioning: https://www.agentcard.sh/ — "Card issuing for agent-first startups", 10-minute onboarding, MCP out of the box.
