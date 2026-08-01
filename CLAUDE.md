@@ -24,9 +24,10 @@ one before working there; this file only carries what crosses boundaries.
 
 State this accurately; several of these look finished from the code alone.
 
-- **Contracts are not deployed.** There is no canonical vault address anywhere,
-  so `giwacard init` cannot complete its attach step and no end-to-end run has
-  ever happened against a live chain.
+- **No end-to-end run has happened against the live chain.** The contracts are
+  deployed and verified (`smartcontracts/deployments/giwa-sepolia.md` has the
+  addresses), but nobody has yet run onboarding, minted a card, and paid the
+  merchant for real.
 - **`giwacard` is not published to npm.** The name is free but unreserved, and
   the version is still `0.0.1`. `npx giwacard` does not resolve; install from the
   repo per `giwacard/llms-install.md`.

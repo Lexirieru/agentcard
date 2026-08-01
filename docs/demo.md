@@ -14,18 +14,23 @@ does not exist yet.
 Gas first — the faucet is rate limited to 0.005–0.01 ETH per 24 hours, so this
 cannot be done on the day.
 
+Gas on GIWA is far cheaper than a mainnet instinct suggests: the price sat at
+0.001 gwei and **deploying both proxies cost 0.0000102 ETH in total**. A single
+faucet claim covers the entire demo several times over.
+
 | Address | Needs | Why |
 | --- | --- | --- |
-| deployer | ~0.002 ETH | one-time: deploys both proxies |
-| owner wallet | ~0.001 ETH | deposits, policy, approvals |
-| agent session key | ~0.001 ETH | one mint per purchase |
-| merchant key | ~0.001 ETH | one charge per purchase (~1e-5 ETH each) |
+| deployer | already funded | one-time: deploys both proxies |
+| owner wallet | ~0.0005 ETH | deposits, policy, approvals |
+| agent session key | ~0.0005 ETH | one mint per purchase |
+| merchant key | ~0.0005 ETH | one charge per purchase |
 
-Claim across two or three days if a single claim is short. Confirm each balance
-before starting; `giwacard status` reports the owner and session key, and the
-merchant refuses to start if its key is unfunded.
+Confirm each balance before starting; `giwacard status` reports the owner and
+session key, and the merchant refuses to start if its key is unfunded.
 
-Deploy and verify:
+**The contracts are already deployed and verified** — addresses in
+`smartcontracts/deployments/giwa-sepolia.md`. Skip to Scene 1 unless you are
+deploying a fresh instance. To redeploy:
 
 ```bash
 cd smartcontracts
