@@ -31,4 +31,13 @@ function main(argv: readonly string[]): number {
   return 0
 }
 
-process.exitCode = main(process.argv.slice(2))
+const argv = process.argv.slice(2)
+
+if (argv[0] === 'daemon') {
+  // Imported lazily so the common CLI paths never pay for loading Hono and a
+  // SQLite driver (U8).
+  const { runDaemonCommand } = await import('./daemon/server.js')
+  process.exitCode = await runDaemonCommand(argv.slice(1))
+} else {
+  process.exitCode = main(argv)
+}

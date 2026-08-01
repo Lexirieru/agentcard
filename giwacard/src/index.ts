@@ -8,4 +8,5 @@
 export * from './chain/giwaSepolia.js'
 export * from './chain/clients.js'
 export * from './chain/keystore.js'
+export * from './daemon/index.js'
 export { VERSION } from './version.js'

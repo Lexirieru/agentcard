@@ -38,6 +38,7 @@
     "x402"
   ],
   "dependencies": {
+    "hono": "^4.12.33",
     "viem": "^2.40.0"
   },
   "devDependencies": {
