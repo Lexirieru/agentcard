@@ -18,9 +18,11 @@ import {
 } from '../../chain/keystore.js'
 import {
   agentHostDescriptor,
+  allAgentHosts,
   passphraseInstructions,
+  resolveAgentHostId,
   writeAgentConfig,
-  AGENT_HOSTS,
+  DEFAULT_AGENT_HOST,
   type AgentHostId,
 } from '../agentConfig.js'
 import { bannerText } from '../banner.js'
@@ -717,11 +719,14 @@ async function stepPolicy(run: WizardRun): Promise<void> {
 /* 8. Agent host config                                                       */
 /* -------------------------------------------------------------------------- */
 
-function isAgentHostId(value: string): value is AgentHostId {
-  return (AGENT_HOSTS as readonly string[]).includes(value)
-}
-
-/** Write the MCP server entry into the chosen agent host's config file. */
+/**
+ * Write the MCP server entry into the chosen agent host's config file.
+ *
+ * The host picker lists every file by path, and the result is announced by path
+ * too. That is not decoration: the two Claudes read different files, and the
+ * only way a user can tell the wizard configured the product they are actually
+ * running is to see the filename.
+ */
 async function stepAgentConfig(run: WizardRun): Promise<void> {
   if (isStepComplete(run.state, 'agent-config')) {
     skipping(run, 'agent-config', (run.state.agentHosts ?? []).join(', ') || 'configured')
@@ -735,34 +740,36 @@ async function stepAgentConfig(run: WizardRun): Promise<void> {
     throw new CliError('KEYSTORE_INCOMPLETE', 'Earlier setup steps have not run.')
   }
 
-  const requested = run.options.host?.toLowerCase()
-  if (requested !== undefined && !isAgentHostId(requested)) {
-    throw new CliError(
-      'INVALID_ARGUMENT',
-      `Unknown agent host "${requested}".`,
-      { hint: `Supported hosts: ${AGENT_HOSTS.join(', ')}.` },
-    )
+  const overrides = run.runtime.agentConfig ?? {}
+  const descriptorOptions = {
+    ...(overrides.home !== undefined ? { home: overrides.home } : {}),
+    ...(overrides.platform !== undefined ? { platform: overrides.platform } : {}),
+    ...(overrides.cwd !== undefined ? { cwd: overrides.cwd } : {}),
   }
+
+  // `resolveAgentHostId` throws for an unknown host, and separately for
+  // `claude`, which names two products with two different files.
+  const requested =
+    run.options.host !== undefined
+      ? resolveAgentHostId(run.options.host)
+      : undefined
 
   const hostId: AgentHostId =
     requested ??
     (run.options.yes
-      ? 'claude'
+      ? DEFAULT_AGENT_HOST
       : await run.runtime.prompter.select<AgentHostId>({
           message: 'Which agent should giwacard register with?',
-          options: [
-            { value: 'claude', label: 'Claude Desktop' },
-            { value: 'cursor', label: 'Cursor' },
-            { value: 'gemini', label: 'Gemini CLI' },
-          ],
-          initialValue: 'claude',
+          options: allAgentHosts(descriptorOptions).map((candidate) => ({
+            value: candidate.id,
+            label: candidate.label,
+            // The path is the only thing that distinguishes the two Claudes.
+            hint: candidate.configPath,
+          })),
+          initialValue: DEFAULT_AGENT_HOST,
         }))
 
-  const overrides = run.runtime.agentConfig ?? {}
-  const host = agentHostDescriptor(hostId, {
-    ...(overrides.home !== undefined ? { home: overrides.home } : {}),
-    ...(overrides.platform !== undefined ? { platform: overrides.platform } : {}),
-  })
+  const host = agentHostDescriptor(hostId, descriptorOptions)
 
   // KTD-15 says the passphrase is not persisted. The MCP server needs it. That
   // conflict is resolved by asking, defaulting to no, and printing the manual
@@ -803,6 +810,20 @@ async function stepAgentConfig(run: WizardRun): Promise<void> {
     { label: 'Passphrase', value: result.passphraseStored ? 'stored in the file' : 'NOT stored' },
     { label: 'Then', value: host.note },
   ])
+  // Stated in prose as well as in the panel: "which file" is the one fact a
+  // user needs to notice that the wrong Claude was configured.
+  run.runtime.output.line(
+    `Wrote the giwacard MCP server entry for ${host.label} to ${result.path}.`,
+  )
+
+  if (result.passphraseStored && host.id === 'claude-code') {
+    run.runtime.output.line(
+      `WARNING: ${result.path} now contains your keystore passphrase in ` +
+        'plaintext, and .mcp.json is a project file that is routinely ' +
+        'committed. Add it to .gitignore, or remove GIWACARD_PASSPHRASE from ' +
+        'it and export the variable instead.',
+    )
+  }
 
   if (!result.passphraseStored) {
     run.runtime.output.blank()

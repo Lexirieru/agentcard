@@ -270,6 +270,22 @@ export async function createContextFromEnv(
 /* `giwacard mcp`                                                             */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The narrowest view of stdin this command needs: EOF notification, plus the
+ * two flags that say EOF already happened.
+ *
+ * Declared structurally so a test satisfies it with an `EventEmitter` and no
+ * pipe is opened. `process.stdin` satisfies it by assignment.
+ */
+export interface StdinEndSource {
+  on(event: 'end' | 'close', listener: () => void): unknown
+  off(event: 'end' | 'close', listener: () => void): unknown
+  /** True once the stream has emitted `end`. */
+  readonly readableEnded?: boolean | undefined
+  /** True once the stream has been destroyed. */
+  readonly closed?: boolean | undefined
+}
+
 export interface RunMcpCommandOptions {
   env?: McpEnv
   /** Injected in tests so no real pipe is opened. */
@@ -278,12 +294,33 @@ export interface RunMcpCommandOptions {
     : Parameters<McpServer['connect']>[0]
   /** Diagnostics sink. Never stdout — that is the protocol channel. */
   stderr?: NodeJS.WritableStream
+  /**
+   * The input pipe to watch for EOF. Injected in tests; production watches
+   * `process.stdin`. See {@link runMcpCommand} for why watching it is required.
+   */
+  stdin?: StdinEndSource
 }
 
 /**
  * Entry point behind `giwacard mcp`.
  *
- * Connects over stdio and resolves when the host closes the connection.
+ * Connects over stdio and resolves when the host hangs up.
+ *
+ * ## Why stdin is watched directly
+ *
+ * `StdioServerTransport` subscribes to stdin's `data` and `error` events and
+ * nothing else — it has no EOF handling, so **`transport.onclose` never fires
+ * when the host closes the pipe**. Waiting only on `onclose` left the awaited
+ * promise permanently unsettled: Node's event loop drained, the top-level await
+ * in `cli.ts` never resolved, and the process died with exit code 13 and a
+ * `Detected unsettled top-level await` warning. A host that spawns this server
+ * and later closes stdin — which is the ordinary way an MCP host shuts one down
+ * — saw a crash where there was nothing wrong.
+ *
+ * So EOF on stdin is a first-class shutdown signal here, alongside `SIGINT`,
+ * `SIGTERM` and the transport's own close. Whichever arrives first wins; all
+ * four unwind through the same path, close the server, and return 0, because
+ * every one of them is a clean end to the conversation rather than a failure.
  *
  * @returns The process exit code.
  */
@@ -298,6 +335,10 @@ export async function runMcpCommand(
   })
 
   const transport = options.transport ?? new StdioServerTransport()
+  // A caller that supplies its own transport is not speaking over the process
+  // pipes, so watching `process.stdin` would be watching an unrelated stream.
+  const stdin: StdinEndSource | undefined =
+    options.stdin ?? (options.transport === undefined ? process.stdin : undefined)
 
   try {
     await server.connect(transport)
@@ -313,14 +354,29 @@ export async function runMcpCommand(
   stderr.write(`giwacard mcp v${VERSION} ready on stdio\n`)
 
   await new Promise<void>((resolve) => {
+    let done = false
     const shutdown = () => {
+      // Four independent signals race here and more than one routinely fires
+      // (stdin emits `end` then `close`); resolving twice is harmless, but
+      // leaving listeners attached would keep the process alive.
+      if (done) return
+      done = true
       process.off('SIGINT', shutdown)
       process.off('SIGTERM', shutdown)
+      stdin?.off('end', shutdown)
+      stdin?.off('close', shutdown)
       resolve()
     }
     process.once('SIGINT', shutdown)
     process.once('SIGTERM', shutdown)
+    stdin?.on('end', shutdown)
+    stdin?.on('close', shutdown)
     transport.onclose = shutdown
+
+    // `connect()` is awaited above, so EOF on an already-closed stdin can have
+    // been emitted before the listeners went on. Without this the server would
+    // hang for exactly the case the listeners exist to handle.
+    if (stdin?.readableEnded === true || stdin?.closed === true) shutdown()
   })
 
   await server.close()

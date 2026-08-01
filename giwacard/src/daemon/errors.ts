@@ -59,20 +59,46 @@ export class DaemonError extends Error {
 /* -------------------------------------------------------------------------- */
 
 /**
+ * The minimum Node that ships `node:sqlite`. Mirrors `engines.node`.
+ *
+ * Stated as a constant because two things must agree: the version `package.json`
+ * refuses to install below, and the version this error tells a user to upgrade
+ * to. They drifted once — `engines` said `>=20`, which installs cleanly and then
+ * fails at the first over-policy request — so the number lives in one place.
+ */
+export const MINIMUM_NODE_VERSION = '22.5.0' as const
+
+/**
  * Neither `bun:sqlite` nor `node:sqlite` could be loaded.
  *
  * KTD-10 pins the daemon to SQLite. Bun ships `bun:sqlite`; Node only gained a
- * built-in driver in 22.5. On an older Node there is no embedded database to
- * fall back to, and installing one would break "no extra install".
+ * built-in driver in {@link MINIMUM_NODE_VERSION}. On an older Node there is no
+ * embedded database to fall back to, and installing one would break "no extra
+ * install".
+ *
+ * The message names the required version *and* the one actually running: this
+ * error is reachable long after install, from an MCP server the user never
+ * launched by hand, and "upgrade Node" is unactionable without both numbers.
  */
 export class SqliteUnavailableError extends DaemonError {
   override readonly name = 'SqliteUnavailableError'
   constructor(cause?: unknown) {
+    const running =
+      typeof process !== 'undefined' && typeof process.version === 'string'
+        ? process.version
+        : 'unknown'
     super(
       'DAEMON_SQLITE_UNAVAILABLE',
       'The giwacard daemon needs an embedded SQLite driver and found none. ' +
-        'Run it under Bun (`bun:sqlite`) or Node >= 22.5 (`node:sqlite`).',
-      { httpStatus: 503, cause },
+        `It requires Node >= ${MINIMUM_NODE_VERSION} (for \`node:sqlite\`) or ` +
+        `Bun (for \`bun:sqlite\`); this process is Node ${running}. Upgrade ` +
+        'Node, or run giwacard under Bun. Only the over-policy approval flow ' +
+        'needs the daemon — in-policy card minting works without it.',
+      {
+        httpStatus: 503,
+        details: { required: MINIMUM_NODE_VERSION, running },
+        cause,
+      },
     )
   }
 }

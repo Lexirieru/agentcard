@@ -1,6 +1,9 @@
 import { isAddress, type Address } from 'viem'
 
-import { GIWA_SEPOLIA_RPC_URL } from '../chain/giwaSepolia.js'
+import {
+  GIWA_SEPOLIA_ETH_FAUCET_URL,
+  GIWA_SEPOLIA_RPC_URL,
+} from '../chain/giwaSepolia.js'
 import { CliError } from './errors.js'
 
 /**
@@ -43,13 +46,12 @@ export interface CliEnv {
 }
 
 /**
- * Where a user gets GIWA Sepolia ETH.
+ * Where a user gets GIWA Sepolia ETH. Override with `$GIWACARD_ETH_FAUCET_URL`.
  *
- * The docs index rather than a specific faucet host: GIWA's faucet endpoints
- * have moved during testnet, and a stale hard-coded URL sends users to a 404 at
- * the exact moment they are stuck. Override with `$GIWACARD_ETH_FAUCET_URL`.
+ * Re-exported from the chain facts so the CLI and the MCP error taxonomy quote
+ * one URL — see {@link GIWA_SEPOLIA_ETH_FAUCET_URL} for why it is the docs index.
  */
-export const DEFAULT_ETH_FAUCET_URL = 'https://docs.giwa.io/faucets' as const
+export const DEFAULT_ETH_FAUCET_URL = GIWA_SEPOLIA_ETH_FAUCET_URL
 
 /**
  * The gas floor the wizard funds a session key to.

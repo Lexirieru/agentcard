@@ -78,6 +78,8 @@ export interface AgentConfigOverrides {
   fs?: AgentConfigFs
   home?: string
   platform?: NodeJS.Platform
+  /** Project root for per-project hosts (Claude Code's `.mcp.json`). */
+  cwd?: string
 }
 
 /** The runtime handed to every command. */

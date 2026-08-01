@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto'
+import type { Address } from 'viem'
 import { z } from 'zod'
 
 import type { Hex } from '../../chain/keystore.js'
-import { nowSeconds, sessionAddress } from '../context.js'
+import { nowSeconds, sessionAddress, type GiwaCardMcpContext } from '../context.js'
 import {
   McpToolError,
   approvalPendingError,
@@ -17,6 +18,7 @@ import {
   readBalances,
   readPaymentToken,
   readPolicy,
+  type OverPolicyReason,
 } from '../vault.js'
 import {
   addressSchema,
@@ -90,6 +92,155 @@ function newApprovalId(): Hex {
   return `0x${randomBytes(32).toString('hex')}`
 }
 
+/* -------------------------------------------------------------------------- */
+/* The shared decision                                                        */
+/* -------------------------------------------------------------------------- */
+
+/** A card the agent asked for, in the units the vault speaks. */
+export interface MintRequestInput {
+  cap: bigint
+  merchant: Address
+  /** Absolute unix seconds, already resolved from any relative TTL. */
+  expiry: bigint
+  /** Written for the human who reads the approval queue. */
+  reason?: string | undefined
+  idempotencyKey?: string | undefined
+}
+
+/** Which of the two consent tiers a request landed in, and what it produced. */
+export type MintDecision =
+  | {
+      path: 'in_policy'
+      cardId: bigint
+      txHash: Hex
+      cap: bigint
+      merchant: Address
+      expiry: bigint
+    }
+  | {
+      path: 'over_policy'
+      approvalId: string
+      /** Epoch ms at which the queued request expires undecided. */
+      approvalExpiresAt: number
+      reasons: OverPolicyReason[]
+      explanation: string
+      cap: bigint
+      merchant: Address
+      expiry: bigint
+    }
+
+/**
+ * Run the KTD-2/KTD-3 fork for one requested card.
+ *
+ * Extracted from the tool handler because `pay_merchant` needs the identical
+ * decision: a payment that mints its own card must be subject to exactly the
+ * same policy, the same AE5/AE7 pre-checks and the same "over policy submits
+ * nothing" rule as a bare `mint_card`. Two copies of this logic would be two
+ * places for the consent model to drift, and the copy inside a payment tool is
+ * the one nobody would think to audit.
+ *
+ * @throws {McpToolError} `SESSION_KEY_REVOKED`, `MERCHANT_OUT_OF_SCOPE` (AE7),
+ * `INSUFFICIENT_AVAILABLE_BALANCE` (AE5), or — when an idempotency key replays
+ * a request the owner already settled — `APPROVAL_PENDING` / `APPROVAL_DENIED` /
+ * `APPROVAL_EXPIRED`.
+ */
+export async function resolveMintRequest(
+  context: GiwaCardMcpContext,
+  input: MintRequestInput,
+): Promise<MintDecision> {
+  const { cap, merchant, expiry } = input
+  const now = nowSeconds(context)
+  const session = sessionAddress(context)
+
+  const snapshot = await readPolicy(context)
+  if (!snapshot.policy.active) {
+    throw sessionKeyRevokedError(session, context.vaultOwner)
+  }
+
+  // AE7 before anything else: a merchant outside scope cannot be fixed by
+  // approval, so there is nothing to queue and nothing to submit.
+  if (!(await isMerchantAllowed(context, merchant))) {
+    throw merchantOutOfScopeError(merchant, 'mint')
+  }
+
+  // AE5: the owner-signed path checks the same balance, so queueing a request
+  // that cannot be funded would only waste the owner's attention.
+  const balances = await readBalances(context)
+  if (balances.available < cap) {
+    throw insufficientAvailableBalanceError(balances.available, cap)
+  }
+
+  const verdict = evaluatePolicy(snapshot, { cap, merchantScope: merchant, expiry }, now)
+
+  if (verdict.fits) {
+    const { cardId, txHash } = await mintCardInPolicy(context, {
+      cap,
+      merchantScope: merchant,
+      expiry,
+    })
+    return { path: 'in_policy', cardId, txHash, cap, merchant, expiry }
+  }
+
+  /* -------------------------- over policy: queue only ----------------------- */
+
+  const token = await readPaymentToken(context)
+  const approvalRequest = {
+    // The exact CardApproval the owner's client will sign (CardTypes.sol).
+    // Stored verbatim so the signature commits to the terms this server later
+    // relays — see check_approval_status.
+    vaultOwner: context.vaultOwner,
+    agent: session,
+    token,
+    cap: cap.toString(),
+    merchantScope: merchant,
+    expiry: expiry.toString(),
+    approvalId: newApprovalId(),
+    // Domain context the owner's signer needs but the struct does not carry.
+    vault: context.vaultAddress,
+  }
+
+  const { record, created } = await context.approvals.create({
+    sessionKey: session,
+    request: approvalRequest,
+    reason: input.reason ?? verdict.explanation,
+    agent: context.agentLabel ?? null,
+    idempotencyKey: input.idempotencyKey ?? null,
+  })
+
+  if (!created) {
+    // A replayed idempotency key. Answer with the state of the original.
+    if (record.status === 'pending') throw approvalPendingError(record.id)
+    if (record.status === 'denied') {
+      throw new McpToolError(
+        'APPROVAL_DENIED',
+        `The vault owner denied approval request ${record.id}` +
+          `${record.decisionNote ? `: ${record.decisionNote}` : '.'} ` +
+          'Do not re-file the same request.',
+        { details: { approvalId: record.id } },
+      )
+    }
+    if (record.status === 'expired') {
+      throw new McpToolError(
+        'APPROVAL_EXPIRED',
+        `Approval request ${record.id} expired before the owner decided. ` +
+          'File a new one with a different idempotency_key.',
+        { details: { approvalId: record.id } },
+      )
+    }
+  }
+
+  return {
+    path: 'over_policy',
+    approvalId: record.id,
+    approvalExpiresAt: record.expiresAt,
+    reasons: verdict.reasons,
+    explanation: verdict.explanation,
+    cap,
+    merchant,
+    expiry,
+  }
+}
+
 export const mintCardTool = defineTool({
   name: 'mint_card',
   title: 'Mint a virtual card',
@@ -104,112 +255,48 @@ export const mintCardTool = defineTool({
   async handler(args, context) {
     const cap = parseAmount(args.amount, 'amount')
     const merchant = parseAddress(args.merchant)
-    const now = nowSeconds(context)
-    const expiry = now + BigInt(args.expires_in_seconds ?? DEFAULT_CARD_TTL_SECONDS)
-    const session = sessionAddress(context)
+    const expiry =
+      nowSeconds(context) +
+      BigInt(args.expires_in_seconds ?? DEFAULT_CARD_TTL_SECONDS)
 
-    const snapshot = await readPolicy(context)
-    if (!snapshot.policy.active) {
-      throw sessionKeyRevokedError(session, context.vaultOwner)
-    }
+    const decision = await resolveMintRequest(context, {
+      cap,
+      merchant,
+      expiry,
+      reason: args.reason,
+      idempotencyKey: args.idempotency_key,
+    })
 
-    // AE7 before anything else: a merchant outside scope cannot be fixed by
-    // approval, so there is nothing to queue and nothing to submit.
-    if (!(await isMerchantAllowed(context, merchant))) {
-      throw merchantOutOfScopeError(merchant, 'mint')
-    }
-
-    // AE5: the owner-signed path checks the same balance, so queueing a request
-    // that cannot be funded would only waste the owner's attention.
-    const balances = await readBalances(context)
-    if (balances.available < cap) {
-      throw insufficientAvailableBalanceError(balances.available, cap)
-    }
-
-    const verdict = evaluatePolicy(snapshot, { cap, merchantScope: merchant, expiry }, now)
-
-    if (verdict.fits) {
-      const { cardId, txHash } = await mintCardInPolicy(context, {
-        cap,
-        merchantScope: merchant,
-        expiry,
-      })
+    if (decision.path === 'in_policy') {
       return {
         status: 'minted',
-        card_id: cardId.toString(),
+        card_id: decision.cardId.toString(),
         amount: cap.toString(),
         merchant,
         expires_at: Number(expiry),
-        mint_tx_hash: txHash,
+        mint_tx_hash: decision.txHash,
         path: 'in_policy',
         message:
-          `Card ${cardId} is active for up to ${cap} at ${merchant}. It can be ` +
-          'charged exactly once.',
-      }
-    }
-
-    /* ------------------------- over policy: queue only ---------------------- */
-
-    const token = await readPaymentToken(context)
-    const approvalRequest = {
-      // The exact CardApproval the owner's client will sign (CardTypes.sol).
-      // Stored verbatim so the signature commits to the terms this server later
-      // relays — see check_approval_status.
-      vaultOwner: context.vaultOwner,
-      agent: session,
-      token,
-      cap: cap.toString(),
-      merchantScope: merchant,
-      expiry: expiry.toString(),
-      approvalId: newApprovalId(),
-      // Domain context the owner's signer needs but the struct does not carry.
-      vault: context.vaultAddress,
-    }
-
-    const { record, created } = await context.approvals.create({
-      sessionKey: session,
-      request: approvalRequest,
-      reason: args.reason ?? verdict.explanation,
-      agent: context.agentLabel ?? null,
-      idempotencyKey: args.idempotency_key ?? null,
-    })
-
-    if (!created) {
-      // A replayed idempotency key. Answer with the state of the original.
-      if (record.status === 'pending') throw approvalPendingError(record.id)
-      if (record.status === 'denied') {
-        throw new McpToolError(
-          'APPROVAL_DENIED',
-          `The vault owner denied approval request ${record.id}` +
-            `${record.decisionNote ? `: ${record.decisionNote}` : '.'} ` +
-            'Do not re-file the same request.',
-          { details: { approvalId: record.id } },
-        )
-      }
-      if (record.status === 'expired') {
-        throw new McpToolError(
-          'APPROVAL_EXPIRED',
-          `Approval request ${record.id} expired before the owner decided. ` +
-            'File a new one with a different idempotency_key.',
-          { details: { approvalId: record.id } },
-        )
+          `Card ${decision.cardId} is active for up to ${cap} at ${merchant}. ` +
+          'It can be charged exactly once.',
       }
     }
 
     return {
       status: 'approval_required',
-      approval_id: record.id,
+      approval_id: decision.approvalId,
       amount: cap.toString(),
       merchant,
       expires_at: Number(expiry),
-      over_policy_reasons: verdict.reasons,
+      over_policy_reasons: decision.reasons,
       path: 'over_policy',
       submitted_onchain: false,
-      approval_expires_at: record.expiresAt,
+      approval_expires_at: decision.approvalExpiresAt,
       message:
-        `${verdict.explanation} No transaction was submitted. The request is ` +
-        `queued for the vault owner as ${record.id}; poll check_approval_status ` +
-        'with that approval_id. Approval is owner-only — you cannot grant it.',
+        `${decision.explanation} No transaction was submitted. The request is ` +
+        `queued for the vault owner as ${decision.approvalId}; poll ` +
+        'check_approval_status with that approval_id. Approval is owner-only ' +
+        '— you cannot grant it.',
     }
   },
 })

@@ -5,9 +5,10 @@ import { getBalanceTool } from './getBalance.js'
 import { getCardStatusTool } from './getCardStatus.js'
 import { getPolicyTool } from './getPolicy.js'
 import { mintCardTool } from './mintCard.js'
+import { payMerchantTool } from './payMerchant.js'
 
 /**
- * The complete agent-facing tool surface (R7). Exactly six tools, no more.
+ * The complete agent-facing tool surface (R7, R14/R15). Seven tools, no more.
  *
  * ## What is deliberately not here
  *
@@ -22,11 +23,22 @@ import { mintCardTool } from './mintCard.js'
  * the CLI or the dashboard, both of which authenticate by reading a 0600 file
  * this process never hands out.
  *
- * `src/mcp/surface.test.ts` asserts this against the live `tools/list` response,
- * not against this array, so adding a tool anywhere still trips the guard.
+ * ## Why the seventh tool does not weaken that
+ *
+ * `pay_merchant` spends, but it cannot spend anything `mint_card` could not:
+ * it mints through the identical policy fork, and an over-policy price queues
+ * an approval and pays nothing. What it adds is the other half of the loop —
+ * the 402 exchange — and it adds it *server-side*, which is the direction that
+ * makes R10b true rather than aspirational. The alternative was every host
+ * assembling `X-PAYMENT` headers itself.
+ *
+ * `src/mcp/surface.test.ts` asserts all of this against the live `tools/list`
+ * response, not against this array, so adding a tool anywhere still trips the
+ * guard.
  */
 export const GIWACARD_TOOLS: readonly ToolDefinition[] = [
   mintCardTool,
+  payMerchantTool,
   getCardStatusTool,
   cancelCardTool,
   getBalanceTool,
@@ -64,5 +76,8 @@ export {
   getCardStatusTool,
   getPolicyTool,
   mintCardTool,
+  payMerchantTool,
 }
 export * from './define.js'
+export { resolveMintRequest, type MintDecision, type MintRequestInput } from './mintCard.js'
+export { DEFAULT_PAYMENT_CARD_TTL_SECONDS } from './payMerchant.js'

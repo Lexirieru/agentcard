@@ -59,8 +59,17 @@ const FORBIDDEN_NAME_FRAGMENTS = [
   'grant',
 ]
 
+/**
+ * The complete advertised surface.
+ *
+ * `pay_merchant` is the seventh and was added deliberately (R14/R15): without
+ * it an agent can mint a card and has nowhere to spend it. It is listed here,
+ * not exempted from anything below — the approval ban applies to it exactly as
+ * it applies to the other six.
+ */
 const EXPECTED_TOOL_NAMES = [
   'mint_card',
+  'pay_merchant',
   'get_card_status',
   'cancel_card',
   'get_balance',
@@ -69,9 +78,15 @@ const EXPECTED_TOOL_NAMES = [
 ]
 
 describe('agent-facing MCP surface', () => {
-  test('advertises exactly the six tools R7 specifies', async () => {
+  test('advertises exactly the seven tools the product specifies', async () => {
     const names = await listToolNames()
     expect([...names].sort()).toEqual([...EXPECTED_TOOL_NAMES].sort())
+  })
+
+  test('the payment tool is advertised, so the core loop can complete', async () => {
+    // R14/R15, flow F2. Asserted separately from the exact-set test above so a
+    // future edit to that list cannot quietly drop the payment path.
+    expect(await listToolNames()).toContain('pay_merchant')
   })
 
   test('advertises no tool that can resolve an approval', async () => {

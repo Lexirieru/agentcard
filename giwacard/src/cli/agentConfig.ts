@@ -17,11 +17,24 @@ import { CliError } from './errors.js'
 /**
  * Step 8 of the wizard: register the giwacard MCP server with the agent host.
  *
- * All three supported hosts use the same `mcpServers` object, so the only real
+ * Every supported host uses the same `mcpServers` object, so the only real
  * differences are where the file lives and what else is in it. The write is
  * therefore a **merge**, never a replace: these files hold the user's other MCP
  * servers, and clobbering them to add ours would be an unforgivable way to
  * introduce yourself.
+ *
+ * ## The two Claudes
+ *
+ * "Claude" is not a host. **Claude Code** reads `.mcp.json` from the project
+ * root; **Claude Desktop** reads `claude_desktop_config.json` from a
+ * platform-specific application directory. They are different products with
+ * different files, and writing one when the user runs the other produces the
+ * worst possible outcome: a wizard that reports success, a config file that is
+ * genuinely correct, and a server the user's agent never sees.
+ *
+ * So they are separate choices with separate ids, and the bare id `claude` is
+ * refused rather than guessed — see {@link resolveAgentHostId}. Guessing is what
+ * caused the bug.
  *
  * ## The passphrase question
  *
@@ -39,10 +52,65 @@ import { CliError } from './errors.js'
  */
 
 /** The agent hosts the wizard can configure. */
-export const AGENT_HOSTS = ['claude', 'cursor', 'gemini'] as const
+export const AGENT_HOSTS = [
+  'claude-code',
+  'claude-desktop',
+  'cursor',
+  'gemini',
+] as const
 
 /** One supported agent host. */
 export type AgentHostId = (typeof AGENT_HOSTS)[number]
+
+/** The host chosen when nobody is there to answer (`--yes`, no TTY). */
+export const DEFAULT_AGENT_HOST: AgentHostId = 'claude-code'
+
+/**
+ * Names that map to more than one host, and the hosts they could mean.
+ *
+ * `claude` is the only one, and it is here rather than aliased to a winner on
+ * purpose: whichever of the two we picked would be silently wrong for half the
+ * users who typed it.
+ */
+export const AMBIGUOUS_AGENT_HOST_NAMES: Readonly<
+  Record<string, readonly AgentHostId[]>
+> = { claude: ['claude-code', 'claude-desktop'] }
+
+function isAgentHostId(value: string): value is AgentHostId {
+  return (AGENT_HOSTS as readonly string[]).includes(value)
+}
+
+/**
+ * Turn a `--host` value into a host id.
+ *
+ * @throws {CliError} `INVALID_ARGUMENT` for an unknown host, and — separately,
+ * with both files named — for `claude`, which is ambiguous rather than unknown.
+ * The two need different text: "no such host" tells someone who typed `claude`
+ * nothing, and they typed the most natural thing.
+ */
+export function resolveAgentHostId(raw: string): AgentHostId {
+  const normalized = raw.trim().toLowerCase()
+  if (isAgentHostId(normalized)) return normalized
+
+  const candidates = AMBIGUOUS_AGENT_HOST_NAMES[normalized]
+  if (candidates) {
+    const lines = candidates.map((id) => {
+      const descriptor = agentHostDescriptor(id)
+      return `  --host ${id}\t${descriptor.label} (${descriptor.configPath})`
+    })
+    throw new CliError(
+      'INVALID_ARGUMENT',
+      `"${normalized}" is ambiguous: it names two different products with two ` +
+        'different config files.\n\n' +
+        lines.join('\n'),
+      { hint: 'Pass the one you actually use. Nothing was written.' },
+    )
+  }
+
+  throw new CliError('INVALID_ARGUMENT', `Unknown agent host "${normalized}".`, {
+    hint: `Supported hosts: ${AGENT_HOSTS.join(', ')}.`,
+  })
+}
 
 /** Key under which every supported host stores its MCP servers. */
 export const MCP_SERVERS_KEY = 'mcpServers' as const
@@ -63,9 +131,11 @@ export interface AgentHostDescriptor {
 /**
  * Resolve a host's config path for the current platform.
  *
- * Claude Desktop is the only one that moves: macOS keeps it under
+ * Claude Desktop is the only one that moves with the OS: macOS keeps it under
  * `Application Support`, Windows under `%APPDATA%`, Linux under `~/.config`.
- * Cursor and the Gemini CLI both use a stable dot-directory in `$HOME`.
+ * Cursor and the Gemini CLI use a stable dot-directory in `$HOME`. Claude Code
+ * is the odd one out — its file is **per project**, not per user, so it is
+ * resolved against the working directory the wizard was run from.
  */
 export function agentHostDescriptor(
   id: AgentHostId,
@@ -73,6 +143,8 @@ export function agentHostDescriptor(
     home?: string
     platform?: NodeJS.Platform
     env?: Record<string, string | undefined>
+    /** Project root for the per-project hosts. Defaults to `process.cwd()`. */
+    cwd?: string
   } = {},
 ): AgentHostDescriptor {
   const home = options.home ?? homedir()
@@ -80,7 +152,17 @@ export function agentHostDescriptor(
   const env = options.env ?? process.env
 
   switch (id) {
-    case 'claude': {
+    case 'claude-code':
+      return {
+        id,
+        label: 'Claude Code',
+        configPath: join(options.cwd ?? process.cwd(), '.mcp.json'),
+        note:
+          'Claude Code reads .mcp.json from the project root and picks it up ' +
+          'on restart. This file is often committed — never let it carry your ' +
+          'passphrase.',
+      }
+    case 'claude-desktop': {
       const path =
         os === 'darwin'
           ? join(

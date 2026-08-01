@@ -334,7 +334,7 @@ export async function cancelCard(
       'OWNER_ACTION_REQUIRED',
       `Cancelling card ${cardId} releases escrow from the vault owner's ` +
         'balance, so only the owner can do it. This MCP server holds a session ' +
-        'key, not the owner key. Ask the user to run `giwacard cancel ' +
+        'key, not the owner key. Ask the user to run `giwacard revoke card ' +
         `${cardId}\` or cancel it from the dashboard.`,
       { details: { cardId: cardId.toString() } },
     )
@@ -546,13 +546,196 @@ export function parseSettlementHeader(raw: string | null): PaymentSettlement | n
   }
 }
 
+/* -------------------------------------------------------------------------- */
+/* Discovering what a paid resource costs (the 402)                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The `accepts[0]` fields this client is willing to act on.
+ *
+ * A strict subset of what the merchant sends, copied field by field after a
+ * shape check, for the same reason {@link PaymentSettlement} is: the 402 body is
+ * the one part of the exchange an attacker controls for free, and everything in
+ * here ends up informing a spend decision.
+ */
+export interface MerchantPaymentRequirements {
+  /** Payment scheme the merchant implements. */
+  scheme: string
+  /** Network slug the merchant settles on. */
+  network: string
+  /** Price in token base units, as a decimal string. */
+  maxAmountRequired: string
+  /** The address that will charge the card — the card's `merchantScope`. */
+  payTo: Address
+  /** `CardVault` the merchant settles through. */
+  vault: Address
+  /** Chain id the charge will land on. */
+  chainId: number
+}
+
+/** What an unpaid request to a resource turned out to be. */
+export type MerchantProbe =
+  /** The ordinary case: the merchant wants a card. */
+  | { status: 'payment_required'; requirements: MerchantPaymentRequirements }
+  /** The resource was served without payment. Nothing to mint, nothing to spend. */
+  | { status: 'free'; httpStatus: number; body: unknown }
+
+function readRequirements(body: unknown): Record<string, unknown> | null {
+  if (!isRecord(body)) return null
+  const accepts = body['accepts']
+  const first = Array.isArray(accepts) ? accepts[0] : undefined
+  return isRecord(first) ? first : null
+}
+
+/**
+ * Ask a paid resource what it costs, without presenting anything.
+ *
+ * This is step one of the 402 exchange and the only step that is allowed to
+ * fail cheaply: no card exists yet, so nothing can be spent, expired or
+ * double-charged by getting it wrong.
+ *
+ * The **venue checks are the point**. A merchant states which vault and which
+ * chain it settles through; if either disagrees with this server's, the card we
+ * would mint could not be charged there — and in the worst reading, we would be
+ * minting against an attacker's contract because a 402 body said so. So a
+ * mismatch is refused here, before a card is minted, rather than discovered
+ * after the escrow is locked.
+ *
+ * @throws {McpToolError} `INVALID_REQUEST` when the merchant is unreachable in
+ * the protocol sense — no 402, no readable requirements, a scheme this client
+ * cannot settle, or a vault/chain that is not ours; `RPC_UNAVAILABLE` when the
+ * merchant itself is down.
+ */
+export async function probeMerchant(
+  context: GiwaCardMcpContext,
+  resource: string,
+): Promise<MerchantProbe> {
+  const fetchImpl: FacilitatorFetch = context.facilitator?.fetch ?? globalThis.fetch
+  const expectedChainId = context.facilitator?.chainId ?? GIWA_SEPOLIA_CHAIN_ID
+
+  let response: FacilitatorResponse
+  try {
+    response = await fetchImpl(resource, { headers: {} })
+  } catch (cause) {
+    throw new McpToolError(
+      'RPC_UNAVAILABLE',
+      `The merchant at ${resource} could not be reached. No card was minted ` +
+        'and nothing was spent. Retry in a few seconds.',
+      { retryable: true, cause, details: { resource } },
+    )
+  }
+
+  let body: unknown = null
+  try {
+    body = await response.json()
+  } catch {
+    // Left null; the branches below each say what that means for them.
+  }
+
+  if (response.ok) {
+    return { status: 'free', httpStatus: response.status, body }
+  }
+
+  if (response.status >= 500) {
+    throw new McpToolError(
+      'RPC_UNAVAILABLE',
+      `The merchant at ${resource} failed with HTTP ${response.status} before ` +
+        'quoting a price. No card was minted and nothing was spent. Retry once.',
+      { retryable: true, details: { resource, httpStatus: response.status } },
+    )
+  }
+
+  if (response.status !== 402) {
+    throw new McpToolError(
+      'INVALID_REQUEST',
+      `The merchant at ${resource} answered HTTP ${response.status} rather ` +
+        'than the 402 that quotes a price, so there is nothing to pay. No card ' +
+        'was minted. Check the URL.',
+      { details: { resource, httpStatus: response.status } },
+    )
+  }
+
+  const accepts = readRequirements(body)
+  const payTo = accepts ? addressField(accepts, 'payTo') : null
+  const price = accepts ? decimalField(accepts, 'maxAmountRequired') : null
+  if (!accepts || payTo === null || price === null) {
+    throw new McpToolError(
+      'INVALID_REQUEST',
+      `The merchant at ${resource} asked for payment but its 402 does not say ` +
+        'who to pay or how much, so no card can be scoped to it. No card was ' +
+        'minted. This is a merchant-side protocol error, not something to retry.',
+      { details: { resource } },
+    )
+  }
+
+  const scheme = typeof accepts['scheme'] === 'string' ? accepts['scheme'] : ''
+  if (scheme !== GIWA_VAULT_CHARGE_SCHEME) {
+    throw new McpToolError(
+      'INVALID_REQUEST',
+      `The merchant at ${resource} settles with the "${scheme}" scheme, which ` +
+        `this vault cannot pay — it issues ${GIWA_VAULT_CHARGE_SCHEME} cards. ` +
+        'No card was minted. Nothing can be retried here; the merchant is not ' +
+        'compatible with GiwaCard.',
+      { details: { resource, scheme } },
+    )
+  }
+
+  const extra = isRecord(accepts['extra']) ? accepts['extra'] : {}
+  const vault = addressField(extra, 'vault')
+  const chainIdRaw = extra['chainId']
+  const chainId =
+    typeof chainIdRaw === 'number' && Number.isSafeInteger(chainIdRaw)
+      ? chainIdRaw
+      : null
+
+  if (vault === null || vault.toLowerCase() !== context.vaultAddress.toLowerCase()) {
+    throw new McpToolError(
+      'INVALID_REQUEST',
+      `The merchant at ${resource} settles through CardVault ` +
+        `${vault ?? 'an unstated address'}, not ${context.vaultAddress}. A ` +
+        'card from this vault could not be charged there. No card was minted ' +
+        'and nothing was spent — do not present a card to this merchant.',
+      { details: { resource, merchantVault: vault ?? null } },
+    )
+  }
+
+  if (chainId !== null && chainId !== expectedChainId) {
+    throw new McpToolError(
+      'INVALID_REQUEST',
+      `The merchant at ${resource} settles on chain ${chainId}, not ` +
+        `${expectedChainId}. No card was minted and nothing was spent.`,
+      { details: { resource, merchantChainId: chainId } },
+    )
+  }
+
+  const network =
+    typeof accepts['network'] === 'string'
+      ? accepts['network']
+      : (context.facilitator?.network ?? 'giwa-sepolia')
+
+  return {
+    status: 'payment_required',
+    requirements: {
+      scheme,
+      network,
+      maxAmountRequired: price,
+      payTo,
+      vault,
+      chainId: chainId ?? expectedChainId,
+    },
+  }
+}
+
 /**
  * Present a card to a merchant and collect the product it sells (KTD-9).
  *
- * Internal by construction: no MCP tool exposes it, and an agent never handles
- * payment material itself. The whole client-side flow is one request carrying
- * one header. The merchant charges the card, verifies its own transaction, and
- * returns the product with a `PAYMENT-RESPONSE` receipt naming the settlement.
+ * The whole client-side flow is one request carrying one header. The merchant
+ * charges the card, verifies its own transaction, and returns the product with
+ * a `PAYMENT-RESPONSE` receipt naming the settlement. The `X-PAYMENT` header is
+ * built and sent **here**, inside the server: R10b says the agent never
+ * constructs payment-bearing material, which is only true if the exchange
+ * happens on this side of the tool boundary. `pay_merchant` is the tool that
+ * calls it; nothing hands the header out.
  *
  * Failures are mapped through {@link mapMerchantRefusal}, so a card that is
  * spent, expired or scoped elsewhere reaches the agent as the same stable code

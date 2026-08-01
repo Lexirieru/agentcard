@@ -53,6 +53,14 @@ const VAULT = '0x1111111111111111111111111111111111111111' as Address
 const TOKEN = '0x2222222222222222222222222222222222222222' as Address
 const MERCHANT = '0x3333333333333333333333333333333333333333' as Address
 
+/** Stands in for the project root a user runs `giwacard init` from. */
+const PROJECT_DIR = '/work/project'
+/** Where Claude Code — the unattended default — is configured. */
+const CLAUDE_CODE_CONFIG = `${PROJECT_DIR}/.mcp.json`
+/** Where Claude Desktop is configured on the tests' fake Linux box. */
+const CLAUDE_DESKTOP_CONFIG =
+  '/home/test/.config/Claude/claude_desktop_config.json'
+
 let dir: string
 let keystoreOptions: KeystoreOptions
 
@@ -116,6 +124,7 @@ function wizardRuntime(options: {
       fs: options.agentFs ?? memoryAgentConfigFs(),
       home: '/home/test',
       platform: 'linux',
+      cwd: PROJECT_DIR,
     },
   })
 }
@@ -168,7 +177,7 @@ describe('resuming an interrupted wizard', () => {
 
     // The agent host config was written with the merged entry.
     const config = JSON.parse(
-      agentFs.files['/home/test/.config/Claude/claude_desktop_config.json'] as string,
+      agentFs.files[CLAUDE_CODE_CONFIG] as string,
     ) as Record<string, Record<string, unknown>>
     expect(config[MCP_SERVERS_KEY]?.[MCP_SERVER_ENTRY_NAME]).toBeDefined()
   })
@@ -266,6 +275,7 @@ describe('resuming an interrupted wizard', () => {
         fs: memoryAgentConfigFs(),
         home: '/home/test',
         platform: 'linux',
+        cwd: PROJECT_DIR,
       },
     })
 
@@ -346,6 +356,7 @@ describe('the policy step seeds the merchant allowlist (F2 depends on it)', () =
         fs: memoryAgentConfigFs(),
         home: '/home/test',
         platform: 'linux',
+        cwd: PROJECT_DIR,
       },
     })
 
@@ -365,8 +376,7 @@ describe('the agent host config', () => {
 
     await runInitCommand(runtime, { yes: true })
 
-    const path = '/home/test/.config/Claude/claude_desktop_config.json'
-    const written = agentFs.files[path] as string
+    const written = agentFs.files[CLAUDE_CODE_CONFIG] as string
     expect(written).not.toContain(PASSPHRASE)
     expect(written).toContain(VAULT)
     expect(runtime.output.stdout).toContain('NOT stored')
@@ -382,6 +392,55 @@ describe('the agent host config', () => {
     expect(Object.keys(agentFs.files)).toEqual(['/home/test/.cursor/mcp.json'])
   })
 
+  test('the two Claudes are different hosts writing different files', async () => {
+    // The defect this replaced: `--host claude` wrote Claude Desktop's config,
+    // so a Claude Code user finished the wizard with a server they never saw.
+    const upToHostConfig = [...WIZARD_STEPS].slice(0, 7) as WizardStepId[]
+
+    seedInterrupted(upToHostConfig)
+    const codeFs = memoryAgentConfigFs()
+    await runInitCommand(wizardRuntime({ agentFs: codeFs }), {
+      yes: true,
+      host: 'claude-code',
+    })
+    expect(Object.keys(codeFs.files)).toEqual([CLAUDE_CODE_CONFIG])
+
+    // Reset to the same point and choose the other Claude.
+    seedInterrupted(upToHostConfig)
+    const desktopFs = memoryAgentConfigFs()
+    await runInitCommand(wizardRuntime({ agentFs: desktopFs }), {
+      yes: true,
+      host: 'claude-desktop',
+    })
+    expect(Object.keys(desktopFs.files)).toEqual([CLAUDE_DESKTOP_CONFIG])
+  })
+
+  test('bare "claude" is refused rather than guessed', async () => {
+    seedInterrupted([...WIZARD_STEPS].slice(0, 7) as WizardStepId[])
+    const agentFs = memoryAgentConfigFs()
+    const runtime = wizardRuntime({ agentFs })
+
+    const error = (await runInitCommand(runtime, {
+      yes: true,
+      host: 'claude',
+    }).catch((caught: unknown) => caught)) as CliError
+    expect(error.code).toBe('INVALID_ARGUMENT')
+    expect(error.message).toContain('claude-code')
+    expect(error.message).toContain('claude-desktop')
+    // Nothing was written on either side of the ambiguity.
+    expect(Object.keys(agentFs.files)).toEqual([])
+  })
+
+  test('the wizard names the file it wrote, in prose', async () => {
+    seedInterrupted([...WIZARD_STEPS].slice(0, 7) as WizardStepId[])
+    const runtime = wizardRuntime()
+
+    await runInitCommand(runtime, { yes: true, host: 'claude-desktop' })
+    expect(runtime.output.stdout).toContain(
+      `Wrote the giwacard MCP server entry for Claude Desktop to ${CLAUDE_DESKTOP_CONFIG}`,
+    )
+  })
+
   test('an unknown host is refused by name', async () => {
     seedInterrupted([...WIZARD_STEPS].slice(0, 7) as WizardStepId[])
     const runtime = wizardRuntime()
@@ -391,6 +450,6 @@ describe('the agent host config', () => {
       host: 'emacs',
     }).catch((caught: unknown) => caught)) as CliError
     expect(error.code).toBe('INVALID_ARGUMENT')
-    expect(error.hint).toContain('claude, cursor, gemini')
+    expect(error.hint).toContain('claude-code, claude-desktop, cursor, gemini')
   })
 })

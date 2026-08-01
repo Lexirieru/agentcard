@@ -2,6 +2,7 @@ import { BaseError, ContractFunctionRevertedError } from 'viem'
 
 import { RpcRetryLimitError } from '../chain/clients.js'
 import { cardStatusName } from '../chain/cardVaultAbi.js'
+import { GIWA_SEPOLIA_ETH_FAUCET_URL } from '../chain/giwaSepolia.js'
 import { DaemonError } from '../daemon/errors.js'
 
 /**
@@ -18,6 +19,25 @@ import { DaemonError } from '../daemon/errors.js'
  * anything unrecognised lands. A failure that cannot be classified is reported
  * as a generic RPC failure rather than surfaced verbatim, because an
  * unclassified error is exactly the case where we do not know what it contains.
+ *
+ * ## Every command named here must exist
+ *
+ * "Names the next action" is only true if the action is real. An agent relays
+ * these messages verbatim to a human, who types what they are told; a command
+ * that was never built turns a recoverable failure into a dead end, and the
+ * human has no way to tell the two apart. The CLI's entire surface is:
+ *
+ * ```
+ * giwacard init | status | approve | revoke key|card | faucet | daemon | mcp
+ * ```
+ *
+ * Nothing outside that list may appear in a message. Two consequences are easy
+ * to get wrong and are asserted in `errors.test.ts`:
+ *
+ * - `giwacard faucet` claims **gUSD**, the money. It does not claim ETH, so it
+ *   is never the answer to {@link noGasError} — ETH comes from a web faucet.
+ * - Cancelling a card is `giwacard revoke card <id>`. There is no
+ *   `giwacard cancel`.
  */
 
 /** Stable, machine-branchable failure codes. Never renumbered or reused. */
@@ -102,13 +122,26 @@ export class McpToolError extends Error {
 /* Constructors, one per class in the taxonomy                                */
 /* -------------------------------------------------------------------------- */
 
-/** The session EOA cannot pay for gas. */
+/**
+ * The session EOA cannot pay for gas.
+ *
+ * The remedy names ETH and only ETH. `giwacard faucet` claims gUSD — the money
+ * a card is *denominated* in — and pointing a stranded user at it sends them to
+ * the wrong asset, where the claim succeeds and the transaction still fails.
+ */
 export function noGasError(sessionKey: string): McpToolError {
   return new McpToolError(
     'NO_GAS',
     `The session key ${sessionKey} has no ETH on GIWA Sepolia and cannot pay ` +
-      'for gas. Ask the vault owner to run `giwacard faucet`, then retry.',
-    { retryable: true, details: { sessionKey } },
+      'for gas. ETH is the gas, not the money: `giwacard faucet` claims gUSD ' +
+      'and will not fix this. Ask the vault owner to fund that address with ' +
+      `testnet ETH from ${GIWA_SEPOLIA_ETH_FAUCET_URL} (a web page a human ` +
+      'must open), or to re-run `giwacard init`, whose session-key step tops ' +
+      'the key up from the owner wallet. Then retry.',
+    {
+      retryable: true,
+      details: { sessionKey, faucetUrl: GIWA_SEPOLIA_ETH_FAUCET_URL, asset: 'ETH' },
+    },
   )
 }
 
@@ -177,6 +210,11 @@ export function insufficientAvailableBalanceError(
  * presented at the wrong merchant is refused by that merchant's facilitator and
  * reaches us as a `merchant_scope_mismatch` in its 402. Same code, same advice,
  * different messenger. See {@link merchantRefusalError}.
+ *
+ * The `mint` remedy is deliberately unglamorous. Seeding the allowlist happens
+ * in step 7 of `giwacard init`, which registers the policy and its merchants in
+ * one `registerSessionKey` call; there is no standalone command for it, so this
+ * message names the wizard rather than a command nobody built.
  */
 export function merchantOutOfScopeError(
   merchant: string,
@@ -186,8 +224,11 @@ export function merchantOutOfScopeError(
     'MERCHANT_OUT_OF_SCOPE',
     context === 'mint'
       ? `Merchant ${merchant} is not on this session key's allowlist, so no ` +
-          'card can be scoped to it. Ask the vault owner to add it with ' +
-          '`giwacard merchants add`. Raising the cap will not help.'
+          'card can be scoped to it. The allowlist is deny-by-default and only ' +
+          'the vault owner can change it: ask them to re-run `giwacard init ' +
+          `--fresh\` with GIWACARD_MERCHANT_ADDRESS=${merchant} set, which ` +
+          're-registers this session key with that merchant allowed. Raising ' +
+          'the cap will not help, and an approval request cannot fix it either.'
       : `Merchant ${merchant} could not charge this card: it is scoped to a ` +
           'different merchant. Nothing was paid. Present it at the merchant it ' +
           'was minted for, or mint a new card for this one.',
@@ -447,13 +488,16 @@ export function mapVaultRevert(
         { details: { cardId: asBigInt(argAt(revert, 0)).toString() } },
       )
 
-    case 'NotCardOwner':
+    case 'NotCardOwner': {
+      const cardId = asBigInt(argAt(revert, 0)).toString()
       return new McpToolError(
         'OWNER_ACTION_REQUIRED',
-        `Card ${asBigInt(argAt(revert, 0))} can only be cancelled by the vault ` +
-          'owner. Ask the user to run `giwacard cancel` or use the dashboard.',
-        { details: { cardId: asBigInt(argAt(revert, 0)).toString() } },
+        `Card ${cardId} can only be cancelled by the vault owner. Ask the user ` +
+          `to run \`giwacard revoke card ${cardId}\` or cancel it from the ` +
+          'dashboard.',
+        { details: { cardId } },
       )
+    }
 
     case 'CapPerCardExceeded':
       return new McpToolError(

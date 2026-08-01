@@ -5,9 +5,11 @@ import {
   AGENT_HOSTS,
   allAgentHosts,
   buildMcpServerEntry,
+  DEFAULT_AGENT_HOST,
   MCP_SERVER_ENTRY_NAME,
   MCP_SERVERS_KEY,
   passphraseInstructions,
+  resolveAgentHostId,
   writeAgentConfig,
   type AgentConfigFs,
 } from './agentConfig.js'
@@ -34,25 +36,48 @@ function memoryFs(seed: Record<string, string> = {}): AgentConfigFs & {
 }
 
 describe('host descriptors', () => {
-  test('covers claude, cursor and gemini', () => {
-    expect(AGENT_HOSTS).toEqual(['claude', 'cursor', 'gemini'])
-    expect(allAgentHosts({ home: '/home/u', platform: 'linux' })).toHaveLength(3)
+  test('covers both Claudes, cursor and gemini', () => {
+    expect(AGENT_HOSTS).toEqual([
+      'claude-code',
+      'claude-desktop',
+      'cursor',
+      'gemini',
+    ])
+    expect(allAgentHosts({ home: '/home/u', platform: 'linux' })).toHaveLength(4)
   })
 
-  test('claude moves per platform', () => {
+  test('claude desktop moves per platform', () => {
     expect(
-      agentHostDescriptor('claude', { home: '/home/u', platform: 'darwin' }).configPath,
+      agentHostDescriptor('claude-desktop', { home: '/home/u', platform: 'darwin' })
+        .configPath,
     ).toContain('Library/Application Support/Claude')
     expect(
-      agentHostDescriptor('claude', { home: '/home/u', platform: 'linux' }).configPath,
+      agentHostDescriptor('claude-desktop', { home: '/home/u', platform: 'linux' })
+        .configPath,
     ).toContain('.config/Claude')
     expect(
-      agentHostDescriptor('claude', {
+      agentHostDescriptor('claude-desktop', {
         home: 'C:\\u',
         platform: 'win32',
         env: { APPDATA: 'C:\\u\\AppData\\Roaming' },
       }).configPath,
     ).toContain('Claude')
+  })
+
+  test('claude code is per project, not per user', () => {
+    // The whole point of splitting the hosts: this is a different file from
+    // Claude Desktop's, and it does not live in $HOME.
+    const code = agentHostDescriptor('claude-code', {
+      home: '/home/u',
+      platform: 'linux',
+      cwd: '/work/project',
+    })
+    expect(code.configPath).toBe('/work/project/.mcp.json')
+    expect(code.label).toBe('Claude Code')
+    expect(code.configPath).not.toBe(
+      agentHostDescriptor('claude-desktop', { home: '/home/u', platform: 'linux' })
+        .configPath,
+    )
   })
 
   test('cursor and gemini use stable dot-directories', () => {
@@ -62,6 +87,50 @@ describe('host descriptors', () => {
     expect(
       agentHostDescriptor('gemini', { home: '/home/u', platform: 'linux' }).configPath,
     ).toBe('/home/u/.gemini/settings.json')
+  })
+})
+
+describe('resolveAgentHostId', () => {
+  test('accepts every supported id, case- and space-insensitively', () => {
+    for (const id of AGENT_HOSTS) {
+      expect(resolveAgentHostId(id)).toBe(id)
+      expect(resolveAgentHostId(` ${id.toUpperCase()} `)).toBe(id)
+    }
+  })
+
+  test('refuses bare "claude" and names both files', () => {
+    // Guessing here is the original bug: a Claude Code user was silently given
+    // Claude Desktop's config and a server their agent never saw.
+    let thrown: unknown
+    try {
+      resolveAgentHostId('claude')
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(CliError)
+    const message = (thrown as CliError).message
+    expect(message).toContain('ambiguous')
+    expect(message).toContain('claude-code')
+    expect(message).toContain('claude-desktop')
+    expect(message).toContain('.mcp.json')
+    expect(message).toContain('claude_desktop_config.json')
+  })
+
+  test('an unknown host lists the supported ones', () => {
+    const error = (() => {
+      try {
+        resolveAgentHostId('emacs')
+      } catch (caught) {
+        return caught as CliError
+      }
+      throw new Error('expected a CliError')
+    })()
+    expect(error.code).toBe('INVALID_ARGUMENT')
+    expect(error.hint).toContain('claude-code, claude-desktop, cursor, gemini')
+  })
+
+  test('the unattended default is a real host id', () => {
+    expect(AGENT_HOSTS).toContain(DEFAULT_AGENT_HOST)
   })
 })
 

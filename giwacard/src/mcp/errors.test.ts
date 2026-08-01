@@ -18,7 +18,16 @@ import {
 import {
   McpToolError,
   UNKNOWN_ERROR_MESSAGE,
+  approvalPendingError,
+  cardAlreadyUsedError,
+  insufficientAvailableBalanceError,
   mapVaultRevert,
+  merchantOutOfScopeError,
+  merchantRefusalError,
+  noGasError,
+  rateLimitedError,
+  rpcUnavailableError,
+  sessionKeyRevokedError,
   toErrorPayload,
   toMcpError,
   type McpErrorCode,
@@ -195,6 +204,163 @@ describe('toMcpError', () => {
       new DaemonError('DAEMON_CSRF_TOKEN_INVALID', 'bad token'),
     )
     expect(mapped.code).toBe('RPC_UNAVAILABLE')
+  })
+})
+
+/* -------------------------------------------------------------------------- */
+/* Every command an error names must exist                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The commands `giwacard` actually routes.
+ *
+ * Mirrors the switch in `src/cli/index.ts` plus the two lazy paths in
+ * `src/cli.ts`. An error message is an instruction a human will type; naming a
+ * command nobody built turns a recoverable failure into a dead end, and the
+ * human cannot tell the difference from the message.
+ */
+const REAL_CLI_COMMANDS: ReadonlySet<string> = new Set([
+  'init',
+  'status',
+  'approve',
+  'revoke',
+  'faucet',
+  'daemon',
+  'mcp',
+  'help',
+])
+
+/** Commands named inside backticks, which is how every message spells them. */
+function commandsNamedIn(text: string): string[] {
+  return [...text.matchAll(/`giwacard ([a-z-]+)/g)].map(
+    (match) => match[1] as string,
+  )
+}
+
+/** One message from every constructor and every mapping branch in the module. */
+function everyAgentFacingMessage(): string[] {
+  const messages: string[] = [
+    noGasError(SESSION).message,
+    rateLimitedError(42_000, 'approvals').message,
+    rateLimitedError(42_000, 'rpc').message,
+    approvalPendingError('appr-1').message,
+    cardAlreadyUsedError('7').message,
+    insufficientAvailableBalanceError(100n, 500n).message,
+    merchantOutOfScopeError(MERCHANT, 'mint').message,
+    merchantOutOfScopeError(MERCHANT, 'charge').message,
+    sessionKeyRevokedError(SESSION, OWNER).message,
+    rpcUnavailableError().message,
+    UNKNOWN_ERROR_MESSAGE,
+  ]
+
+  // Every decoded vault revert that has specific advice.
+  const revertCases: [string, readonly unknown[]][] = [
+    ['SessionKeyNotActive', [OWNER, SESSION]],
+    ['InsufficientAvailableBalance', [100n, 500n]],
+    ['MerchantNotAllowed', [OWNER, SESSION, MERCHANT]],
+    ['MerchantScopeMismatch', [1n, SESSION, MERCHANT]],
+    ['CardNotActive', [1n, 2]],
+    ['CardNotActive', [1n, 4]],
+    ['CardNotActive', [1n, 0]],
+    ['CardExpired', [1n, 99n]],
+    ['NotCardOwner', [1n, SESSION, OWNER]],
+    ['CapPerCardExceeded', [500n, 100n]],
+    ['DailyCapExceeded', [500n, 100n]],
+    ['ExpiryTooFar', [99n, 50n]],
+    ['ExpiryInPast', [1n]],
+    ['ChargeExceedsCap', [500n, 100n]],
+    ['ApprovalAlreadyUsed', [OWNER, `0x${'ab'.repeat(32)}`]],
+    ['ZeroAmount', []],
+  ]
+  for (const [name, args] of revertCases) {
+    const mapped = mapVaultRevert(revert(name, args))
+    if (mapped) messages.push(mapped.message)
+  }
+
+  // Every merchant refusal reason (KTD-9), plus the two unrecognised fallbacks.
+  const reasons = [
+    'merchant_scope_mismatch',
+    'card_already_settled',
+    'card_already_used',
+    'card_not_active',
+    'card_expired',
+    'card_cap_too_low',
+    'vault_mismatch',
+    'unsupported_network',
+    'unsupported_scheme',
+    'malformed_payment_header',
+    'payment_required',
+    'settlement_failed',
+    'chain_unavailable',
+    'no_charge_event',
+    'wrong_vault',
+    'wrong_merchant',
+    'card_id_mismatch',
+    'amount_below_price',
+    'something_unrecognised',
+  ]
+  for (const reason of reasons) {
+    for (const status of [402, 503]) {
+      messages.push(
+        merchantRefusalError({ reason, status, cardId: '7', merchant: MERCHANT })
+          .message,
+      )
+    }
+  }
+
+  // The daemon codes that surface to an agent.
+  messages.push(toMcpError(new SqliteUnavailableError()).message)
+  messages.push(
+    toMcpError(new RateLimitExceededError(SESSION, 20, 3_600_000, 42_000)).message,
+  )
+  messages.push(toMcpError(new ApprovalRequestNotFoundError('x')).message)
+  messages.push(toMcpError(new ApprovalRequestExpiredError('x', 1)).message)
+  messages.push(
+    toMcpError(new DaemonError('DAEMON_CSRF_TOKEN_INVALID', 'bad token')).message,
+  )
+
+  return messages
+}
+
+describe('every command an error names', () => {
+  test('exists in the CLI', () => {
+    const named = new Set(
+      everyAgentFacingMessage().flatMap((message) => commandsNamedIn(message)),
+    )
+    // Sanity: the scan finds something, so a regex that matched nothing cannot
+    // pass this test vacuously.
+    expect(named.size).toBeGreaterThan(0)
+    for (const command of named) {
+      expect(REAL_CLI_COMMANDS).toContain(command)
+    }
+  })
+
+  test('NO_GAS sends the user to ETH, not to the gUSD faucet', () => {
+    // `giwacard faucet` claims gUSD. Recommending it for a gas shortfall sends
+    // the user to the wrong asset entirely: the claim succeeds, the balance
+    // goes up, and the transaction still cannot be paid for. It is named here
+    // only to close off the mistake, so the assertion is that every mention of
+    // it is a negation.
+    const error = noGasError(SESSION)
+    expect(error.message).toMatch(/`giwacard faucet`[^.]*will not fix this/)
+    expect(error.message).not.toMatch(/run `giwacard faucet`/)
+    expect(error.message).toContain('https://docs.giwa.io/faucets')
+    expect(error.message).toContain('ETH is the gas')
+    expect(error.details).toMatchObject({ asset: 'ETH' })
+  })
+
+  test('AE7 on a mint names the wizard, not a merchants command', () => {
+    const message = merchantOutOfScopeError(MERCHANT, 'mint').message
+    expect(message).not.toContain('merchants add')
+    expect(commandsNamedIn(message)).toEqual(['init'])
+    expect(message).toContain('GIWACARD_MERCHANT_ADDRESS')
+  })
+
+  test('an owner-only cancel names `giwacard revoke card <id>`', () => {
+    const mapped = mapVaultRevert(revert('NotCardOwner', [7n, SESSION, OWNER]))
+    expect(mapped?.code).toBe('OWNER_ACTION_REQUIRED')
+    expect(mapped?.message).toContain('giwacard revoke card 7')
+    expect(mapped?.message).not.toContain('giwacard cancel')
   })
 })
 

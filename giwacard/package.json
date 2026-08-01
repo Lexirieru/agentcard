@@ -5,7 +5,7 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.5.0"
   },
   "bin": {
     "giwacard": "./dist/cli.js"
@@ -20,7 +20,9 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist"
+    "dist",
+    "skill/SKILL.md",
+    "llms-install.md"
   ],
   "sideEffects": false,
   "scripts": {

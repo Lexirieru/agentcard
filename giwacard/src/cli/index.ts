@@ -96,7 +96,12 @@ Commands
 Options
   --yes                   Accept defaults; do not prompt
   --id <id>               approve: resolve this request without the picker
-  --host <name>           init: agent host to configure (claude, cursor, gemini)
+  --host <name>           init: agent host to configure. One of:
+                            claude-code     .mcp.json in the project root
+                            claude-desktop  claude_desktop_config.json
+                            cursor          ~/.cursor/mcp.json
+                            gemini          ~/.gemini/settings.json
+                          "claude" is refused: the two Claudes read different files.
   --fresh                 init: ignore recorded progress and re-run every step
   --gas                   status: also show the per-submitter gas budget
   --version, -v           Print the version

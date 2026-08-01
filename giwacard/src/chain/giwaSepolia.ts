@@ -31,6 +31,21 @@ export const GIWA_SEPOLIA_EXPLORER_API_URL =
   'https://sepolia-explorer.giwa.io/api' as const
 
 /**
+ * Where a human gets GIWA Sepolia **ETH** — the gas asset.
+ *
+ * A web page, not an RPC call: nothing in this package can claim it, and no CLI
+ * command can either. `giwacard faucet` claims **gUSD**, which is the money, not
+ * the gas — so a gas shortfall must never be answered with that command. This
+ * constant lives beside the chain facts because both the CLI and the MCP error
+ * taxonomy need it and neither should import the other.
+ *
+ * The docs index rather than a specific faucet host: GIWA's faucet endpoints
+ * have moved during testnet, and a stale hard-coded URL sends users to a 404 at
+ * the exact moment they are stuck.
+ */
+export const GIWA_SEPOLIA_ETH_FAUCET_URL = 'https://docs.giwa.io/faucets' as const
+
+/**
  * Advertised Flashblocks preconfirmation interval, in milliseconds.
  *
  * KTD-5: preconfirmation state is a UX affordance only. Onchain state remains
