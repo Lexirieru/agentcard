@@ -31,6 +31,18 @@ body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
+/*
+ * AppKit mounts <w3m-modal> as a fixed, fully transparent host even while the
+ * modal is closed, and its internals give it a ~328px floor. On a 320px-wide
+ * phone that alone puts a horizontal scrollbar on the page. Clamping the host
+ * to the viewport costs the closed modal nothing and keeps the dashboard from
+ * ever scrolling sideways.
+ */
+w3m-modal {
+  max-width: 100vw;
+  overflow-x: clip;
+}
+
 /* Entrance choreography, matching the landing page keyframes exactly. */
 @keyframes fadeSlideUp {
   0% {
