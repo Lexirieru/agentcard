@@ -688,6 +688,197 @@ function FeaturesSection() {
   )
 }
 
+
+/**
+ * The MCP entry every host takes, and where each one keeps it.
+ *
+ * Paths are the ones `giwacard init` actually writes (see
+ * giwacard/src/cli/agentConfig.ts) rather than guesses. Claude Code and Claude
+ * Desktop are separate products reading separate files, so they are listed
+ * separately — telling someone "Claude" would configure the wrong one half the
+ * time.
+ */
+const MCP_ENTRY = `{
+  "mcpServers": {
+    "giwacard": {
+      "command": "npx",
+      "args": ["-y", "giwacard", "mcp"],
+      "env": {
+        "GIWACARD_VAULT_ADDRESS": "0xD89395Df78aaFdF86b330899d1C6189211e88750",
+        "GIWACARD_VAULT_OWNER": "0xYourAddress"
+      }
+    }
+  }
+}`
+
+const AGENT_PROMPT =
+  'Read https://github.com/Lexirieru/agentcard/blob/main/giwacard/llms-install.md and set giwacard up for me.'
+
+type HostTab = { id: string; label: string; where: string; body: string }
+
+const HOST_TABS: HostTab[] = [
+  {
+    id: 'claude-code',
+    label: 'Claude Code',
+    where: 'Save as .mcp.json in your project folder',
+    body: MCP_ENTRY,
+  },
+  {
+    id: 'claude-desktop',
+    label: 'Claude Desktop',
+    where: 'Add to claude_desktop_config.json, then restart the app',
+    body: MCP_ENTRY,
+  },
+  {
+    id: 'cursor',
+    label: 'Cursor',
+    where: 'Add to ~/.cursor/mcp.json',
+    body: MCP_ENTRY,
+  },
+  {
+    id: 'gemini',
+    label: 'Gemini CLI',
+    where: 'Add to ~/.gemini/settings.json',
+    body: MCP_ENTRY,
+  },
+  {
+    id: 'prompt',
+    label: 'Just tell your agent',
+    where: 'Paste this to any coding agent and it does the rest',
+    body: AGENT_PROMPT,
+  },
+]
+
+function CopyBlock({ text, mono = true }: { text: string; mono?: boolean }) {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 2200)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
+  const copy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      const field = document.createElement('textarea')
+      field.value = text
+      field.setAttribute('readonly', '')
+      field.style.position = 'fixed'
+      field.style.opacity = '0'
+      document.body.appendChild(field)
+      field.select()
+      try {
+        document.execCommand('copy')
+      } catch {
+        /* nothing else to try */
+      }
+      field.remove()
+    }
+    setCopied(true)
+  }, [text])
+
+  return (
+    <div className="relative">
+      <pre
+        className={`max-h-[19rem] overflow-auto rounded-2xl bg-[#0A0B11] p-5 pr-16 text-[12.5px] leading-relaxed text-white/85 sm:text-[13.5px] ${
+          mono ? 'font-code' : ''
+        } ${mono ? '' : 'whitespace-pre-wrap'}`}
+      >
+        {text}
+      </pre>
+      <button
+        type="button"
+        onClick={copy}
+        aria-label="Copy to clipboard"
+        className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-medium text-white backdrop-blur transition-colors hover:bg-white/20"
+      >
+        {copied ? <Check size={13} /> : <Copy size={13} />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  )
+}
+
+/** Tabs across the agent hosts, with a GSAP crossfade so switching never jumps. */
+function HostSwitcher() {
+  const [active, setActive] = useState(0)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const host = HOST_TABS[active]!
+
+  useEffect(() => {
+    const el = panelRef.current
+    if (!el || prefersReducedMotion()) return
+    const tween = gsap.fromTo(
+      el,
+      { opacity: 0, y: 8 },
+      { opacity: 1, y: 0, duration: 0.32, ease: 'power2.out' },
+    )
+    return () => {
+      tween.kill()
+    }
+  }, [active])
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return
+    e.preventDefault()
+    const next =
+      e.key === 'ArrowRight'
+        ? (active + 1) % HOST_TABS.length
+        : (active - 1 + HOST_TABS.length) % HOST_TABS.length
+    setActive(next)
+    tabRefs.current[next]?.focus()
+  }
+
+  return (
+    <div className="mt-12">
+      <p className={EYEBROW}>Then point your agent at it</p>
+
+      <div
+        role="tablist"
+        aria-label="Agent hosts"
+        onKeyDown={onKeyDown}
+        className="mt-4 flex flex-wrap gap-2"
+      >
+        {HOST_TABS.map((tab, i) => (
+          <button
+            key={tab.id}
+            ref={(el) => {
+              tabRefs.current[i] = el
+            }}
+            role="tab"
+            id={`host-tab-${tab.id}`}
+            aria-selected={i === active}
+            aria-controls={`host-panel-${tab.id}`}
+            tabIndex={i === active ? 0 : -1}
+            onClick={() => setActive(i)}
+            className={`rounded-full px-4 py-2 text-sm transition-colors ${
+              i === active
+                ? 'bg-[#18161B] text-white'
+                : 'bg-[#18161B]/[0.06] text-[#18161B]/70 hover:bg-[#18161B]/10'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <div
+        ref={panelRef}
+        role="tabpanel"
+        id={`host-panel-${host.id}`}
+        aria-labelledby={`host-tab-${host.id}`}
+        className="mt-5"
+      >
+        <p className="mb-3 text-[14px] text-[#18161B]/55">{host.where}</p>
+        <CopyBlock text={host.body} mono={host.id !== 'prompt'} />
+      </div>
+    </div>
+  )
+}
+
 function InstallSection() {
   const [copied, setCopied] = useState(false)
 
@@ -760,6 +951,10 @@ function InstallSection() {
             </a>{' '}
             and run the CLI from the checkout.
           </p>
+        </Reveal>
+
+        <Reveal delay={0.12}>
+          <HostSwitcher />
         </Reveal>
       </div>
     </section>
