@@ -7,15 +7,34 @@ stop and wait for the owner.
 
 ## Repo layout
 
+Each directory has its own `CLAUDE.md` with the traps specific to it. Read that
+one before working there; this file only carries what crosses boundaries.
+
 | Path | What it is |
 | --- | --- |
 | `smartcontracts/` | Foundry. `CardVault.sol` (the core), `GUSD.sol` (test stablecoin + faucet). Both UUPS. |
 | `giwacard/` | The only published npm package: CLI, MCP server, approval daemon, agent skill. |
 | `merchant/` | Demo paid API + x402 facilitator. Operator-run, not published. |
 | `frontend/` | Next.js owner dashboard. Reown AppKit for wallet. |
-| `landingpage/` | Vite marketing page. Source of the shared visual language. |
+| `landingpage/` | Vite marketing page. Source of the shared visual language — **its copy is not about GiwaCard yet**. |
 | `docs/` | `brainstorms/` (product contract), `plans/` (implementation plan), `grant/` (GASOK application). |
 | `references/` | Local study material, gitignored. Not part of the build. |
+
+## Not done yet
+
+State this accurately; several of these look finished from the code alone.
+
+- **Contracts are not deployed.** There is no canonical vault address anywhere,
+  so `giwacard init` cannot complete its attach step and no end-to-end run has
+  ever happened against a live chain.
+- **`giwacard` is not published to npm.** The name is free but unreserved, and
+  the version is still `0.0.1`. `npx giwacard` does not resolve; install from the
+  repo per `giwacard/llms-install.md`.
+- **The landing page still sells a different product.** See
+  `landingpage/CLAUDE.md`.
+- **The grant application has ~58 unfilled placeholders.** See `docs/CLAUDE.md`.
+- **The demo has a script but no recording.** `docs/demo.md` has never been
+  executed against the live testnet.
 
 ## Commands
 
