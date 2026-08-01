@@ -1,0 +1,52 @@
+{
+  "name": "@giwacard/merchant",
+  "version": "0.0.1",
+  "private": true,
+  "description": "GIWA Insights — the GiwaCard demo paid API: HTTP 402 with an x402-shaped scheme settled by CardVault.charge, plus a read-only facilitator.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "giwa-merchant": "./dist/server.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "start": "bun src/server.ts",
+    "dev": "bun --watch src/server.ts"
+  },
+  "keywords": [
+    "giwa",
+    "op-stack",
+    "viem",
+    "hono",
+    "x402",
+    "agent"
+  ],
+  "dependencies": {
+    "hono": "^4.12.33",
+    "viem": "^2.40.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.9",
+    "@types/node": "^20.19.0",
+    "tsdown": "^0.15.6",
+    "typescript": "^5.9.0"
+  }
+}
