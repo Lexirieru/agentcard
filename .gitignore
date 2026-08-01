@@ -1,0 +1,18 @@
+# References (local study material, not part of the product)
+references/
+
+# OS
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Foundry deps (restore with: forge install)
+smartcontracts/lib/
+smartcontracts/cache/
+smartcontracts/out/
