@@ -16,6 +16,9 @@ export default defineConfig({
   // bundling either would duplicate the package at runtime.
   // `bun:sqlite` / `node:sqlite` are runtime-provided modules the daemon picks
   // between at load time — the bundler must not try to resolve either.
+  // `figlet` in particular MUST stay external: it loads its font files from
+  // disk relative to its own module path, so a bundled copy renders no banner
+  // at all (KTD-13).
   external: [
     'viem',
     /^viem\//,
@@ -24,6 +27,11 @@ export default defineConfig({
     'zod',
     /^zod\//,
     /^@modelcontextprotocol\//,
+    '@clack/prompts',
+    'figlet',
+    'gradient-string',
+    'boxen',
+    'cli-table3',
     'bun:sqlite',
     'node:sqlite',
   ],
