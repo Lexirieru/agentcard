@@ -82,7 +82,7 @@ const FEATURES: { title: string; body: ReactNode }[] = [
   },
   {
     title: 'The limits live in the contract',
-    body: 'A cap, one merchant, an expiry — a compromised agent cannot argue with a revert.',
+    body: 'A cap, one merchant, an expiry. A compromised agent can’t argue with a revert.',
   },
   {
     title: 'MCP server included',
@@ -104,7 +104,7 @@ const PROOFS: { title: string; body: string; href: string; source: string }[] = 
     source: 'github.com/Lexirieru/agentcard',
   },
   {
-    title: 'The agent cannot approve its own overspend',
+    title: 'The agent can’t approve its own overspend',
     body: 'Asserted against the live MCP tool list, not against a constant.',
     href: REPO_URL,
     source: 'github.com/Lexirieru/agentcard',
@@ -488,9 +488,9 @@ function CardSection({
       <div className="absolute inset-x-0 bottom-0 flex flex-col gap-8 px-5 pb-10 sm:px-10 sm:pb-14 md:flex-row md:items-end md:justify-between md:px-14 md:pb-16">
         <div className={staggerClass('max-w-md')} style={{ animationDelay: '0.7s' }}>
           <p className="text-[15px] leading-relaxed text-[#18161B]/75 sm:text-base">
-            The cap is escrowed at mint, so a card can never spend more than it was given.
-            The merchant charges it once, the card dies, and whatever went unspent is
-            yours again immediately. Nothing here is enforced by a prompt.
+            The cap is locked up the moment the card is minted, so it can never spend more
+            than you gave it. The merchant charges it once. Whatever goes unspent is yours
+            again before the block is over.
           </p>
           <a
             href={REPO_URL}
@@ -505,7 +505,7 @@ function CardSection({
           className={staggerClass('font-light text-[#18161B] md:text-right')}
           style={{ ...h2Style, animationDelay: '0.5s' }}
         >
-          Then It Is Dead
+          Then It’s Dead
         </h2>
       </div>
     </section>
@@ -748,7 +748,7 @@ function InstallSection() {
 
         <Reveal delay={0.16}>
           <p className="mt-5 text-[13px] leading-relaxed text-[#18161B]/50">
-            Not on npm yet — that command will not resolve today. Until the package is
+            Not on npm yet, so that command won’t resolve today. Until the package is
             published you install from source: clone{' '}
             <a
               href={REPO_URL}
