@@ -164,8 +164,8 @@ flowchart TB
   MCP -->|mint / charge dari session EOA| VAULT[CardVault UUPS multi-owner di GIWA Sepolia]
   CLI -->|deposit / revoke key / releaseExpired| VAULT
   DASH -->|owner-sig + mint-on-approve| VAULT
-  MCP -->|HTTP 402 lalu X-PAYMENT berisi txHash| MERCH[Merchant paid API + facilitator]
-  MERCH -->|verifikasi event Charged - read only| VAULT
+  MCP -->|HTTP 402 lalu X-PAYMENT berisi cardId| MERCH[Merchant paid API + facilitator berdana]
+  MERCH -->|charge cardId lalu verifikasi event pada tx sendiri| VAULT
   VAULT --- GUSD[gUSD UUPS + faucet]
 ```
 
@@ -259,7 +259,7 @@ Milestone pertengahan sebagai paket bukti untuk aplikasi grant: U1–U3 ter-depl
 - **Goal:** `giwacard mcp` (stdio): tools `mint_card`, `get_card_status`, `cancel_card`, `get_balance`, `get_policy`, `check_approval_status`; redaction dua lapis; signing server-side.
 - **Requirements:** R7, R10, R10b. **Dependencies:** U4, U8
 - **Files:** `giwacard/src/mcp/server.ts`, `giwacard/src/mcp/tools/*.ts`, `giwacard/src/mcp/redact.ts`, `giwacard/src/mcp/*.test.ts`
-- **Approach:** KTD-7/8/9; adaptasi surface dari `references/mcp/src` (MIT, atribusi di header + NOTICE) → SDK v2 via codemod; mint dalam policy: submit tx dari session EOA; over-policy: daftarkan ke daemon dan kembalikan `approval_id`; alur bayar internal menjalankan 402 → `CardVault.charge` → `X-PAYMENT` berisi tx hash (KTD-9) tanpa pernah mengembalikan material sensitif; daemon dinyalakan otomatis bila belum jalan (KTD-10). Taksonomi error yang dikembalikan ke agent harus mencakup: no-gas, rate-limit, approval-pending, kartu sudah terpakai (AE3), saldo tersedia kurang (AE5), merchant di luar scope (AE7), dan session key di-revoke.
+- **Approach:** KTD-7/8/9; adaptasi surface dari `references/mcp/src` (MIT, atribusi di header + NOTICE) → SDK v2 via codemod; mint dalam policy: submit tx dari session EOA; over-policy: daftarkan ke daemon dan kembalikan `approval_id`; alur bayar menjalankan 402 → `X-PAYMENT` berisi `cardId` → membaca `PAYMENT-RESPONSE` (KTD-9), tanpa pernah menyubmit charge sendiri dan tanpa mengembalikan material sensitif; daemon dinyalakan otomatis bila belum jalan (KTD-10). Taksonomi error yang dikembalikan ke agent harus mencakup: no-gas, rate-limit, approval-pending, kartu sudah terpakai (AE3), saldo tersedia kurang (AE5), merchant di luar scope (AE7), dan session key di-revoke.
 - **Test scenarios:** Covers AE4 (hasil semua tool lolos redaction — scan pattern kunci); mint dalam policy → card_id; mint over-policy → approval_id tanpa tx; `check_approval_status` pada approval approved → card_id muncul (decoupled dari sesi); tool resolve approval TIDAK terdaftar (parity R7); tiap kelas error di atas mengembalikan kode + pesan yang stabil dan bisa ditindaklanjuti agent; error RPC → pesan aman tanpa stack rahasia; daemon mati → MCP menyalakannya lalu tool tetap berhasil.
 - **Verification:** MCP inspector/list-tools menunjukkan surface persis R7; vitest hijau.
 
@@ -295,7 +295,7 @@ Milestone pertengahan sebagai paket bukti untuk aplikasi grant: U1–U3 ter-depl
 - **Goal:** Service demo `merchant/`: endpoint premium ber-402; facilitator verifikasi (read-only) menyatu.
 - **Requirements:** R14, R15. **Dependencies:** U3, U4
 - **Files:** `merchant/src/index.ts`, `merchant/src/x402.ts`, `merchant/src/verify.ts`, `merchant/test/*.test.ts`, `merchant/package.json`
-- **Approach:** KTD-9/5; layanan demo: "GIWA Insights" — laporan analitik chain (blok, gas, aktivitas) yang dihasilkan on-demand, 1 gUSD/request (bernilai nyata + tanpa dependensi eksternal); flow: 402 + requirements → MCP server menyubmit `CardVault.charge` lalu mengirim `X-PAYMENT` berisi tx hash + cardId → facilitator memverifikasi event `Charged` (alamat vault, merchant, jumlah, cardId cocok) → 200 + laporan + `PAYMENT-RESPONSE`. Facilitator hanya membaca chain sehingga tidak butuh EOA berdana. Kebijakan rilis: laporan dirilis saat charge masuk blok sequencer (bukan menunggu blok safe) — risiko reorg testnet diterima sadar dan dicatat di README demo.
+- **Approach:** KTD-9/5; layanan demo: "GIWA Insights" — laporan analitik chain (blok, gas, aktivitas) yang dihasilkan on-demand, 1 gUSD/request (bernilai nyata + tanpa dependensi eksternal); flow: 402 + requirements → MCP server mengirim `X-PAYMENT` berisi `cardId` → facilitator memanggil `charge(cardId, harga)` dari kunci merchant lalu memverifikasi event `CardCharged` pada receipt-nya sendiri (alamat vault, merchant, jumlah, cardId cocok) → 200 + laporan + `PAYMENT-RESPONSE` berisi tx hash. Facilitator butuh EOA berdana; satu charge L2 ≈ 1e-5 ETH sehingga kuota faucet harian menutupi ratusan charge. Kebijakan rilis: laporan dirilis saat charge masuk blok sequencer (bukan menunggu blok safe) — risiko reorg testnet diterima sadar dan dicatat di README demo.
 - **Test scenarios:** request tanpa payment → 402 + skema benar; payment valid → 200 + laporan; tx hash yang tidak memuat event `Charged` → tolak; event ada tapi merchant/jumlah/cardId tidak cocok → tolak; tx hash yang sudah dipakai request lain → tolak (anti double-spend receipt); kartu bekas (AE3) tidak bisa menghasilkan charge baru; Covers AE7 (respons merchant berisi instruksi injection → tidak mengubah apa pun di sisi kontrak).
 - **Verification:** e2e bayar-dan-terima-laporan di GIWA Sepolia.
 
