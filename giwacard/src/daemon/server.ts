@@ -13,6 +13,7 @@ import {
   daemonTokenPath,
   generateDaemonToken,
   openDaemonDatabase,
+  readSecretFile,
   removeFileIfPresent,
   writeSecretFile,
   type DaemonHomeOptions,
@@ -605,6 +606,19 @@ export interface DaemonHandle {
   stop(): Promise<void>
 }
 
+/** Whether `daemon.json` still points at this process. */
+function ownsRuntimeFiles(homeOptions: DaemonHomeOptions): boolean {
+  const raw = readSecretFile(daemonInfoPath(homeOptions))
+  if (raw === null) return false
+  try {
+    const info = JSON.parse(raw) as Partial<DaemonInfo>
+    return info.pid === process.pid
+  } catch {
+    // Unreadable means nobody can be relying on it; clearing it is safe.
+    return true
+  }
+}
+
 /** Reject anything that is not a loopback literal (KTD-16). */
 function assertLoopback(hostname: string): void {
   if (!LOOPBACK_HOSTNAMES.includes(hostname)) {
@@ -727,7 +741,9 @@ export async function startDaemon(
       server.close(() => resolve())
       server.closeAllConnections?.()
     })
-    if (writeFiles) {
+    // Only retract our own advertisement: if another daemon has since taken
+    // over these files, deleting them would make *it* undiscoverable.
+    if (writeFiles && ownsRuntimeFiles(homeOptions)) {
       removeFileIfPresent(daemonInfoPath(homeOptions))
       removeFileIfPresent(daemonTokenPath(homeOptions))
     }

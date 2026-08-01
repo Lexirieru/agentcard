@@ -38,6 +38,12 @@ if (argv[0] === 'daemon') {
   // SQLite driver (U8).
   const { runDaemonCommand } = await import('./daemon/server.js')
   process.exitCode = await runDaemonCommand(argv.slice(1))
+} else if (argv[0] === 'mcp') {
+  // Also lazy: the MCP SDK and zod are only needed when a host spawns us as an
+  // MCP server (U5). Nothing here may write to stdout — an MCP host is speaking
+  // JSON-RPC over that pipe.
+  const { runMcpCommand } = await import('./mcp/server.js')
+  process.exitCode = await runMcpCommand()
 } else {
   process.exitCode = main(argv)
 }

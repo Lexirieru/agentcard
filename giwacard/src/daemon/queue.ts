@@ -527,10 +527,12 @@ export class ApprovalQueue {
     this.#sweep(now)
 
     const status = options.status ?? 'pending'
-    const limit = Math.min(
-      Math.max(Math.floor(options.limit ?? 100), 1),
-      MAX_LIST_LIMIT,
-    )
+    // A non-numeric `?limit=` must not reach SQLite as NaN.
+    const requested = options.limit
+    const limit =
+      typeof requested === 'number' && Number.isFinite(requested)
+        ? Math.min(Math.max(Math.floor(requested), 1), MAX_LIST_LIMIT)
+        : 100
 
     const where: string[] = []
     const params: (string | number)[] = []

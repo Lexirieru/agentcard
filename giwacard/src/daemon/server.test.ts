@@ -530,6 +530,15 @@ describe('approval flow', () => {
     expect((await call('/v1/requests?status=weird')).status).toBe(400)
   })
 
+  test('a nonsense or oversized ?limit= falls back instead of reaching SQLite', async () => {
+    await createRequest()
+    for (const limit of ['abc', '-5', '0', '99999999', '']) {
+      const response = await call(`/v1/requests?limit=${limit}`)
+      expect(response.status).toBe(200)
+      expect(((await response.json()) as { count: number }).count).toBe(1)
+    }
+  })
+
   test('status filters work over the query string', async () => {
     const { body } = await createRequest()
     await call(`/v1/requests/${body['id'] as string}/resolve`, {

@@ -379,6 +379,38 @@ describe('ensureDaemonRunning', () => {
   })
 })
 
+describe('real spawn (the path U5/U7 take)', () => {
+  test('spawns a detached daemon process and adopts it on the next call', async () => {
+    // `--port 0` lets the child pick a free port and publish it, so the test
+    // cannot collide with anything already listening.
+    const first = await ensureDaemonRunning({
+      dir,
+      port: 0,
+      timeoutMs: 25_000,
+      pollIntervalMs: 100,
+    })
+
+    try {
+      expect(first.started).toBe(true)
+      // A genuinely separate OS process, not this one.
+      expect(first.pid).not.toBe(process.pid)
+      expect(first.pid).toBeGreaterThan(0)
+      expect(first.token).toMatch(/^[0-9a-f]{64}$/)
+
+      const second = await ensureDaemonRunning({ dir, port: 0 })
+      expect(second.started).toBe(false)
+      expect(second.pid).toBe(first.pid)
+      expect(second.url).toBe(first.url)
+    } finally {
+      try {
+        process.kill(first.pid, 'SIGTERM')
+      } catch {
+        // already gone
+      }
+    }
+  }, 30_000)
+})
+
 describe('spawn command resolution', () => {
   test('finds this repo CLI entry point', () => {
     const entry = resolveCliEntry()
