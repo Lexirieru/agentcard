@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Menu, Play, Plus, User, X } from 'lucide-react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+  type RefObject,
+} from 'react'
+import { ArrowUpRight, Check, Copy, Menu, Play, Plus, User, X } from 'lucide-react'
 
 const BG_IMAGE_1 =
   'https://images.higgs.ai/?default=1&output=webp&url=https%3A%2F%2Fd8j0ntlcm91z4.cloudfront.net%2Fuser_38xzZboKViGWJOttwIXH07lWA1P%2Fhf_20260721_161708_64fad17a-06cc-4227-b6d2-1fefec159ec7.png&w=1920&q=85'
@@ -16,12 +24,91 @@ const SPOTLIGHT_R = 260
 const GRID_CELL = 48
 const SWIPE_THRESHOLD = 40
 
-const NAV_ITEMS = ['Product', 'Agents', 'Contracts', 'Docs', 'GitHub']
+/** Wheel deltas (px) that must accumulate at the top before the intro re-locks. */
+const UP_RELEASE = 120
+/** Ignore upward wheel for this long after the document lands back at the top,
+ *  so trackpad momentum from a fast scroll-up does not snap into the hero. */
+const TOP_SETTLE_MS = 400
+const TOP_EPSILON = 2
 
 /** Deployed and verified on GIWA Sepolia — see smartcontracts/deployments. */
 const VAULT_URL =
   'https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750'
 const REPO_URL = 'https://github.com/Lexirieru/agentcard'
+const README_URL = `${REPO_URL}#readme`
+
+const SECTION_FEATURES = 'features'
+const SECTION_INSTALL = 'install'
+
+type NavItem = { label: string; target?: string; href?: string }
+
+const NAV_ITEMS: NavItem[] = [
+  { label: 'Product', target: SECTION_FEATURES },
+  { label: 'Agents', target: SECTION_INSTALL },
+  { label: 'Contracts', href: VAULT_URL },
+  { label: 'Docs', href: README_URL },
+  { label: 'GitHub', href: REPO_URL },
+]
+
+const INSTALL_COMMAND = 'npx giwacard'
+
+const TRANSCRIPT: { speaker: 'you' | 'agent'; text: string }[] = [
+  { speaker: 'you', text: 'pay for the GIWA Insights report' },
+  {
+    speaker: 'agent',
+    text: 'minting a card — 1 gUSD, one merchant, expires in 5 minutes',
+  },
+  { speaker: 'agent', text: 'paid. the card is dead now, and the change came back.' },
+]
+
+const FEATURES: { title: string; body: ReactNode }[] = [
+  {
+    title: 'One command to start',
+    body: (
+      <>
+        <code className="font-code rounded bg-[#18161B]/[0.07] px-1.5 py-0.5 text-[13px]">
+          npx giwacard
+        </code>{' '}
+        walks you through a wallet, a vault, and your agent's session key.
+      </>
+    ),
+  },
+  {
+    title: 'The limits live in the contract',
+    body: 'A cap, one merchant, an expiry — a compromised agent cannot argue with a revert.',
+  },
+  {
+    title: 'MCP server included',
+    body: 'Seven tools your agent gets out of the box, with no integration work on your side.',
+  },
+]
+
+const PROOFS: { title: string; body: string; href: string; source: string }[] = [
+  {
+    title: 'Contracts deployed and verified',
+    body: 'The CardVault is live on GIWA Sepolia with its source published — read it before you trust it.',
+    href: VAULT_URL,
+    source: 'sepolia-explorer.giwa.io',
+  },
+  {
+    title: '960 tests passing',
+    body: '78 contracts, 542 CLI/MCP, 215 merchant, 125 dashboard.',
+    href: REPO_URL,
+    source: 'github.com/Lexirieru/agentcard',
+  },
+  {
+    title: 'The agent cannot approve its own overspend',
+    body: 'Asserted against the live MCP tool list, not against a constant.',
+    href: REPO_URL,
+    source: 'github.com/Lexirieru/agentcard',
+  },
+  {
+    title: 'Deployment cost 0.0000102 ETH',
+    body: 'Gas is not the constraint on GIWA.',
+    href: VAULT_URL,
+    source: 'sepolia-explorer.giwa.io',
+  },
+]
 
 const LOGO_PATHS = [
   'M 128 192 L 128 256 L 64.5 256 L 32 223 L 0 192 L 0 128 L 64 128 Z',
@@ -32,7 +119,87 @@ const LOGO_PATHS = [
 
 const STAGGER_EASE = 'cubic-bezier(0.16, 1, 0.3, 1)'
 
+/** Shared horizontal rhythm for the unlocked content below the intro. */
+const GUTTER = 'px-5 sm:px-10 md:px-14'
+const CONTAINER = 'mx-auto w-full'
+const WIDE = 'max-w-5xl'
+const NARROW = 'max-w-3xl'
+
+const HEADING_STYLE = {
+  fontSize: 'clamp(1.9rem, 5.2vw, 3.5rem)',
+  lineHeight: 1.02,
+  letterSpacing: '-0.03em',
+} as const
+
+const EYEBROW = 'text-[11px] uppercase tracking-[0.2em] text-[#18161B]/45'
+
 type VideoPhase = 'idle' | 'playing' | 'done'
+
+function prefersReducedMotion() {
+  return (
+    typeof window !== 'undefined' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
+
+function scrollToSection(id: string) {
+  const el = document.getElementById(id)
+  if (!el) return
+  el.scrollIntoView({
+    behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    block: 'start',
+  })
+}
+
+/** One-shot in-view flag; drives the shared `.anim-stagger` entrance. */
+function useInView<T extends HTMLElement>(): [RefObject<T>, boolean] {
+  const ref = useRef<T>(null)
+  const [inView, setInView] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setInView(true)
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setInView(true)
+          observer.disconnect()
+        }
+      },
+      { threshold: 0.15, rootMargin: '0px 0px -8% 0px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
+  return [ref, inView]
+}
+
+function Reveal({
+  delay = 0,
+  className = '',
+  children,
+}: {
+  delay?: number
+  className?: string
+  children: ReactNode
+}) {
+  const [ref, inView] = useInView<HTMLDivElement>()
+
+  return (
+    <div
+      ref={ref}
+      className={`${inView ? 'anim-stagger' : 'opacity-0'} ${className}`}
+      style={{ animationDelay: `${delay}s` }}
+    >
+      {children}
+    </div>
+  )
+}
 
 function RevealLayer({ image }: { image: string }) {
   const layerRef = useRef<HTMLDivElement>(null)
@@ -338,19 +505,305 @@ function CardSection({
   )
 }
 
+function ChatDemoSection() {
+  const [ref, inView] = useInView<HTMLDivElement>()
+  const line = inView ? 'anim-stagger' : 'opacity-0'
+
+  return (
+    <section className={`${GUTTER} scroll-mt-24 pb-16 pt-24 sm:pb-24 sm:pt-32`}>
+      <div className={`${CONTAINER} ${NARROW}`}>
+        <Reveal>
+          <p className={EYEBROW}>One purchase, start to finish</p>
+        </Reveal>
+
+        <div
+          ref={ref}
+          className="mt-6 overflow-hidden rounded-3xl border border-[#18161B]/10 bg-[#0A0B11] p-5 shadow-[0_24px_60px_-32px_rgba(10,11,17,0.6)] sm:p-8"
+        >
+          <div
+            className={`flex items-center justify-between gap-4 border-b border-white/10 pb-4 ${line}`}
+            style={{ animationDelay: '0.05s' }}
+          >
+            <div className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-white/20" />
+              <span className="h-2 w-2 rounded-full bg-white/15" />
+              <span className="h-2 w-2 rounded-full bg-white/10" />
+            </div>
+            <span className="font-code text-[10px] uppercase tracking-[0.18em] text-white/30 sm:text-[11px]">
+              giwa sepolia
+            </span>
+          </div>
+
+          <div className="mt-6 flex flex-col gap-5">
+            {TRANSCRIPT.map((entry, i) => (
+              <div
+                key={entry.text}
+                className={`flex flex-col gap-1.5 sm:flex-row sm:items-start sm:gap-5 ${line}`}
+                style={{ animationDelay: `${0.22 + i * 0.18}s` }}
+              >
+                <span
+                  className={`font-code shrink-0 text-[10px] uppercase tracking-[0.18em] sm:w-14 sm:pt-3 sm:text-[11px] ${
+                    entry.speaker === 'you' ? 'text-white/35' : 'text-[#F4F0ED]/70'
+                  }`}
+                >
+                  {entry.speaker}
+                </span>
+                <p
+                  className={`font-code w-fit max-w-full break-words rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed sm:text-[15px] ${
+                    entry.speaker === 'you'
+                      ? 'border border-white/15 text-white'
+                      : 'bg-white/[0.07] text-white/80'
+                  }`}
+                >
+                  {entry.text}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <Reveal delay={0.1}>
+          <p className="mt-6 max-w-xl text-[15px] leading-relaxed text-[#18161B]/60">
+            No standing balance, no approval the agent can widen later. The card exists for
+            one charge and the vault settles the rest back to you.
+          </p>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+function FeaturesSection() {
+  return (
+    <section id={SECTION_FEATURES} className={`${GUTTER} scroll-mt-24 py-16 sm:py-24`}>
+      <div className={`${CONTAINER} ${WIDE}`}>
+        <Reveal>
+          <h2 className="max-w-2xl font-light text-[#18161B]" style={HEADING_STYLE}>
+            What a card for an agent looks like
+          </h2>
+        </Reveal>
+
+        <div className="mt-10 grid gap-4 sm:mt-14 md:grid-cols-3">
+          {FEATURES.map((feature, i) => (
+            <Reveal key={feature.title} delay={0.08 + i * 0.1} className="h-full">
+              <article className="flex h-full flex-col rounded-3xl border border-[#18161B]/10 bg-white/50 p-6 backdrop-blur-sm sm:p-8">
+                <h3 className="text-base font-medium text-[#18161B] sm:text-lg">
+                  {feature.title}
+                </h3>
+                <p className="mt-3 text-[15px] leading-relaxed text-[#18161B]/65">
+                  {feature.body}
+                </p>
+              </article>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function InstallSection() {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 2200)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+
+  const copy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(INSTALL_COMMAND)
+    } catch {
+      // Clipboard API is unavailable on insecure origins; fall back to a selection copy.
+      const field = document.createElement('textarea')
+      field.value = INSTALL_COMMAND
+      field.setAttribute('readonly', '')
+      field.style.position = 'fixed'
+      field.style.opacity = '0'
+      document.body.appendChild(field)
+      field.select()
+      try {
+        document.execCommand('copy')
+      } catch {
+        /* nothing else to try */
+      }
+      field.remove()
+    }
+    setCopied(true)
+  }, [])
+
+  return (
+    <section id={SECTION_INSTALL} className={`${GUTTER} scroll-mt-24 py-16 sm:py-24`}>
+      <div className={`${CONTAINER} ${NARROW}`}>
+        <Reveal>
+          <p className={EYEBROW}>Start here</p>
+        </Reveal>
+
+        <Reveal delay={0.08}>
+          <div className="mt-5 flex items-center gap-3 rounded-2xl bg-[#0A0B11] p-3 pl-5 sm:rounded-full sm:pl-7">
+            <span className="font-code min-w-0 truncate text-[15px] text-white sm:text-lg">
+              <span className="text-white/35">$&nbsp;</span>
+              {INSTALL_COMMAND}
+            </span>
+            <button
+              type="button"
+              onClick={copy}
+              className="ml-auto flex shrink-0 items-center gap-2 rounded-full bg-white px-4 py-2.5 text-sm font-medium text-[#18161B] transition-colors hover:bg-white/90 sm:px-5"
+            >
+              {copied ? <Check size={14} /> : <Copy size={14} />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <span className="sr-only" role="status" aria-live="polite">
+              {copied ? 'Command copied to clipboard' : ''}
+            </span>
+          </div>
+        </Reveal>
+
+        <Reveal delay={0.16}>
+          <p className="mt-5 text-[13px] leading-relaxed text-[#18161B]/50">
+            Not on npm yet — that command will not resolve today. Until the package is
+            published you install from source: clone{' '}
+            <a
+              href={REPO_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="underline decoration-[#18161B]/25 underline-offset-4 transition-colors hover:text-[#18161B]"
+            >
+              github.com/Lexirieru/agentcard
+            </a>{' '}
+            and run the CLI from the checkout.
+          </p>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+function ProofSection() {
+  return (
+    <section className={`${GUTTER} scroll-mt-24 py-16 sm:py-24`}>
+      <div className={`${CONTAINER} ${WIDE}`}>
+        <Reveal>
+          <h2 className="max-w-2xl font-light text-[#18161B]" style={HEADING_STYLE}>
+            What you can check yourself
+          </h2>
+        </Reveal>
+        <Reveal delay={0.08}>
+          <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-[#18161B]/60">
+            Every claim on this page points at something you can open.
+          </p>
+        </Reveal>
+
+        <div className="mt-10 grid gap-4 sm:mt-14 sm:grid-cols-2">
+          {PROOFS.map((proof, i) => (
+            <Reveal key={proof.title} delay={0.08 + i * 0.08} className="h-full">
+              <a
+                href={proof.href}
+                target="_blank"
+                rel="noreferrer"
+                className="group flex h-full flex-col rounded-3xl border border-[#18161B]/10 bg-white/50 p-6 backdrop-blur-sm transition-colors hover:border-[#18161B]/25 hover:bg-white/70 sm:p-8"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <h3 className="text-base font-medium text-[#18161B] sm:text-lg">
+                    {proof.title}
+                  </h3>
+                  <ArrowUpRight
+                    size={18}
+                    className="mt-1 shrink-0 text-[#18161B]/30 transition-all group-hover:text-[#18161B] motion-safe:group-hover:-translate-y-0.5 motion-safe:group-hover:translate-x-0.5"
+                  />
+                </div>
+                <p className="mt-3 text-[15px] leading-relaxed text-[#18161B]/65">
+                  {proof.body}
+                </p>
+                <span className="font-code mt-6 block break-words text-[11px] tracking-tight text-[#18161B]/40 sm:mt-auto sm:pt-6">
+                  {proof.source}
+                </span>
+              </a>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function ClosingSection() {
+  return (
+    <section className={`${GUTTER} pb-24 pt-10 sm:pb-32 sm:pt-16`}>
+      <div className={`${CONTAINER} ${WIDE}`}>
+        <Reveal>
+          <h2
+            className="max-w-3xl font-light text-[#18161B]"
+            style={{
+              fontSize: 'clamp(2.1rem, 7vw, 5rem)',
+              lineHeight: 0.98,
+              letterSpacing: '-0.03em',
+            }}
+          >
+            What would you let an agent buy?
+          </h2>
+        </Reveal>
+        <Reveal delay={0.12}>
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-8 inline-flex items-center gap-2 rounded-full bg-[#18161B] px-7 py-3.5 text-sm font-medium text-white transition-colors hover:bg-[#18161B]/90"
+          >
+            Open the repo
+            <ArrowUpRight size={15} />
+          </a>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+function Content() {
+  return (
+    <main className="relative z-[4] bg-[#F4F0ED]">
+      <ChatDemoSection />
+      <FeaturesSection />
+      <InstallSection />
+      <ProofSection />
+      <ClosingSection />
+    </main>
+  )
+}
+
 function Nav({
   dark,
+  scrolled,
+  activeTarget,
   menuOpen,
   onToggleMenu,
   onCloseMenu,
+  onNavigate,
 }: {
   dark: boolean
+  scrolled: boolean
+  activeTarget: string
   menuOpen: boolean
   onToggleMenu: () => void
   onCloseMenu: () => void
+  onNavigate: (id: string) => void
 }) {
   // The mobile panel is near-black, so keep nav chrome white while it is open.
   const d = dark && !menuOpen
+
+  const itemProps = (item: NavItem) =>
+    item.href
+      ? { href: item.href, target: '_blank', rel: 'noreferrer' as const }
+      : {
+          href: `#${item.target}`,
+          onClick: (e: ReactMouseEvent) => {
+            e.preventDefault()
+            onNavigate(item.target!)
+          },
+        }
+
+  const isActive = (item: NavItem) => Boolean(item.target) && item.target === activeTarget
 
   return (
     <>
@@ -370,18 +823,17 @@ function Nav({
         <nav className="flex flex-col">
           {NAV_ITEMS.map((item, i) => (
             <a
-              key={item}
-              href="#"
-              onClick={(e) => e.preventDefault()}
+              key={item.label}
+              {...itemProps(item)}
               className={`py-3 text-lg transition-all duration-400 ${
-                item === 'Product' ? 'text-white' : 'text-white/70'
+                isActive(item) ? 'text-white' : 'text-white/70'
               } ${menuOpen ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}
               style={{
                 transitionDelay: menuOpen ? `${80 + i * 40}ms` : '0ms',
                 transitionTimingFunction: STAGGER_EASE,
               }}
             >
-              {item}
+              {item.label}
             </a>
           ))}
           <div
@@ -399,14 +851,23 @@ function Nav({
               </span>
               Account
             </button>
-            <button className="rounded-full bg-white px-5 py-2.5 text-sm font-medium text-gray-900">
+            <button
+              onClick={() => onNavigate(SECTION_INSTALL)}
+              className="rounded-full bg-white px-5 py-2.5 text-sm font-medium text-gray-900"
+            >
               Get Started
             </button>
           </div>
         </nav>
       </div>
 
-      <header className="fixed inset-x-0 top-0 z-[60] flex items-center justify-between px-5 py-4 sm:px-8 sm:py-5 md:px-10">
+      <header
+        className={`fixed inset-x-0 top-0 z-[60] flex items-center justify-between px-5 py-4 transition-colors duration-500 sm:px-8 sm:py-5 md:px-10 ${
+          scrolled && !menuOpen
+            ? 'border-b border-[#18161B]/[0.07] bg-[#F4F0ED]/80 backdrop-blur-md'
+            : 'border-b border-transparent'
+        }`}
+      >
         <div className="flex items-center gap-2.5">
           <svg
             width="24"
@@ -434,11 +895,10 @@ function Nav({
         >
           {NAV_ITEMS.map((item) => (
             <a
-              key={item}
-              href="#"
-              onClick={(e) => e.preventDefault()}
+              key={item.label}
+              {...itemProps(item)}
               className={`rounded-full px-4 py-2 text-sm transition-colors duration-500 ${
-                item === 'Product'
+                isActive(item)
                   ? d
                     ? 'bg-[#18161B] text-white'
                     : 'bg-white text-gray-900'
@@ -447,7 +907,7 @@ function Nav({
                     : 'text-white/70 hover:text-white'
               }`}
             >
-              {item}
+              {item.label}
             </a>
           ))}
         </nav>
@@ -468,6 +928,7 @@ function Nav({
             Account
           </button>
           <button
+            onClick={() => onNavigate(SECTION_INSTALL)}
             className={`rounded-full px-5 py-2.5 text-sm font-medium transition-colors duration-500 ${
               d ? 'bg-[#18161B] text-white' : 'bg-white text-gray-900'
             }`}
@@ -506,7 +967,15 @@ export default function App() {
   const [sectionVisible, setSectionVisible] = useState(false)
   const [imagesVisible, setImagesVisible] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
+  const [activeTarget, setActiveTarget] = useState(SECTION_FEATURES)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const pendingScroll = useRef<string | null>(null)
+
+  // `done` is also the unlocked state: the content below the intro only exists
+  // then, so while the intro is playing the document is exactly one viewport
+  // tall and cannot scroll at all.
+  const unlocked = videoPhase === 'done'
 
   const startVideo = useCallback(() => {
     const video = videoRef.current
@@ -529,21 +998,121 @@ export default function App() {
     }
   }, [])
 
+  /** Jump past the cinematic intro without playing it (nav clicks). */
+  const releaseLock = useCallback(() => {
+    const video = videoRef.current
+    if (video) {
+      video.pause()
+      video.currentTime = 0
+    }
+    setVideoPhase('done')
+    setSectionVisible(true)
+    setImagesVisible(true)
+  }, [])
+
+  const goToSection = useCallback(
+    (id: string) => {
+      setMenuOpen(false)
+      if (videoPhase === 'done') {
+        // Defer a frame so a closing mobile menu settles before the scroll.
+        requestAnimationFrame(() => scrollToSection(id))
+        return
+      }
+      pendingScroll.current = id
+      releaseLock()
+    },
+    [videoPhase, releaseLock],
+  )
+
+  // Scroll requested while the intro was still locked: the target only mounts
+  // once `done` renders, so run it on the next frame after that commit.
   useEffect(() => {
+    if (!unlocked || !pendingScroll.current) return
+    const id = pendingScroll.current
+    pendingScroll.current = null
+    const raf = requestAnimationFrame(() => scrollToSection(id))
+    return () => cancelAnimationFrame(raf)
+  }, [unlocked])
+
+  useEffect(() => {
+    document.body.style.overflow = menuOpen ? 'hidden' : ''
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [menuOpen])
+
+  // Nav chrome + active item follow the document scroll once unlocked.
+  useEffect(() => {
+    if (!unlocked) {
+      setScrolled(false)
+      setActiveTarget(SECTION_FEATURES)
+      return
+    }
+    let raf = 0
+    const update = () => {
+      raf = 0
+      setScrolled(window.scrollY > 8)
+      const install = document.getElementById(SECTION_INSTALL)
+      const top = install ? install.getBoundingClientRect().top : Infinity
+      setActiveTarget(top <= 240 ? SECTION_INSTALL : SECTION_FEATURES)
+    }
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update)
+    }
+    update()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [unlocked])
+
+  useEffect(() => {
+    // Upward intent accumulated while the document is pinned at the top.
+    let upAccum = 0
+    let leftTopAt = 0
+
     const onWheel = (e: WheelEvent) => {
-      if (e.deltaY > 0 && videoPhase === 'idle') startVideo()
-      else if (e.deltaY < 0 && videoPhase === 'done') resetToHero()
+      if (videoPhase === 'idle') {
+        if (e.deltaY > 0) startVideo()
+        return
+      }
+      if (videoPhase !== 'done') return
+      if (e.deltaY >= 0) {
+        upAccum = 0
+        return
+      }
+      if (window.scrollY > TOP_EPSILON) {
+        upAccum = 0
+        leftTopAt = performance.now()
+        return
+      }
+      // Let momentum from the scroll that brought us here die out first.
+      if (performance.now() - leftTopAt < TOP_SETTLE_MS) return
+      upAccum += -e.deltaY
+      if (upAccum >= UP_RELEASE) {
+        upAccum = 0
+        resetToHero()
+      }
     }
 
     let touchStartY = 0
+    let touchStartScroll = 0
     const onTouchStart = (e: TouchEvent) => {
       touchStartY = e.touches[0].clientY
+      touchStartScroll = window.scrollY
     }
     const onTouchEnd = (e: TouchEvent) => {
       // Positive delta = swipe up (finger moved toward the top of the screen).
       const delta = touchStartY - e.changedTouches[0].clientY
       if (delta > SWIPE_THRESHOLD && videoPhase === 'idle') startVideo()
-      else if (delta < -SWIPE_THRESHOLD && videoPhase === 'done') resetToHero()
+      else if (
+        delta < -SWIPE_THRESHOLD &&
+        videoPhase === 'done' &&
+        touchStartScroll <= TOP_EPSILON &&
+        window.scrollY <= TOP_EPSILON
+      )
+        resetToHero()
     }
 
     window.addEventListener('wheel', onWheel, { passive: true })
@@ -559,42 +1128,49 @@ export default function App() {
   const navDark = videoPhase === 'done' || sectionVisible
 
   return (
-    <div className="relative h-screen overflow-hidden bg-[#F4F0ED]">
-      <CardSection visible={sectionVisible} imagesVisible={imagesVisible} />
+    <div className="relative min-h-screen overflow-x-clip bg-[#F4F0ED]">
+      <div className="relative h-screen overflow-hidden">
+        <CardSection visible={sectionVisible} imagesVisible={imagesVisible} />
 
-      <video
-        ref={videoRef}
-        src={VIDEO_SRC}
-        muted
-        playsInline
-        preload="auto"
-        onTimeUpdate={(e) => {
-          if (videoPhase === 'playing' && e.currentTarget.currentTime >= 2) {
-            setSectionVisible(true)
-          }
-        }}
-        onEnded={() => {
-          setVideoPhase('done')
-          setImagesVisible(true)
-        }}
-        className={`pointer-events-none fixed inset-0 z-[2] h-full w-full object-cover transition-opacity duration-500 ${
-          videoPhase === 'playing' ? 'opacity-100' : 'opacity-0'
-        }`}
-      />
+        <video
+          ref={videoRef}
+          src={VIDEO_SRC}
+          muted
+          playsInline
+          preload="auto"
+          onTimeUpdate={(e) => {
+            if (videoPhase === 'playing' && e.currentTarget.currentTime >= 2) {
+              setSectionVisible(true)
+            }
+          }}
+          onEnded={() => {
+            setVideoPhase('done')
+            setImagesVisible(true)
+          }}
+          className={`pointer-events-none fixed inset-0 z-[2] h-full w-full object-cover transition-opacity duration-500 ${
+            videoPhase === 'playing' ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
 
-      <div
-        className={`absolute inset-0 z-[3] transition-opacity duration-700 ${
-          videoPhase !== 'idle' ? 'pointer-events-none opacity-0' : 'opacity-100'
-        }`}
-      >
-        <HeroSection onSeeHow={startVideo} />
+        <div
+          className={`absolute inset-0 z-[3] transition-opacity duration-700 ${
+            videoPhase !== 'idle' ? 'pointer-events-none opacity-0' : 'opacity-100'
+          }`}
+        >
+          <HeroSection onSeeHow={startVideo} />
+        </div>
       </div>
+
+      {unlocked && <Content />}
 
       <Nav
         dark={navDark}
+        scrolled={scrolled}
+        activeTarget={activeTarget}
         menuOpen={menuOpen}
         onToggleMenu={() => setMenuOpen((v) => !v)}
         onCloseMenu={() => setMenuOpen(false)}
+        onNavigate={goToSection}
       />
     </div>
   )

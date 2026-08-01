@@ -41,6 +41,25 @@ export interface VaultCard {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Session keys                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `SessionPolicy` from CardTypes.sol, as viem decodes it from `sessionPolicy`.
+ *
+ * A key that was never registered decodes as all-zero with `active: false`,
+ * which is indistinguishable from a revoked key whose caps were zero. That is
+ * the contract's own shape, not a lossy read — the dashboard only ever asks
+ * about keys it saw a `SessionKeyRegistered` log for.
+ */
+export interface VaultSessionPolicy {
+  capPerCard: bigint;
+  dailyCap: bigint;
+  maxExpiry: bigint;
+  active: boolean;
+}
+
+/* -------------------------------------------------------------------------- */
 /* EIP-712                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -69,6 +88,38 @@ export const CARD_APPROVAL_EIP712_TYPES = {
 /* -------------------------------------------------------------------------- */
 /* Events                                                                     */
 /* -------------------------------------------------------------------------- */
+
+export const SESSION_KEY_REGISTERED_EVENT = {
+  type: "event",
+  name: "SessionKeyRegistered",
+  inputs: [
+    { name: "vaultOwner", type: "address", indexed: true },
+    { name: "sessionKey", type: "address", indexed: true },
+    { name: "capPerCard", type: "uint256", indexed: false },
+    { name: "dailyCap", type: "uint256", indexed: false },
+    { name: "maxExpiry", type: "uint64", indexed: false },
+  ],
+} as const;
+
+export const SESSION_KEY_MERCHANT_SET_EVENT = {
+  type: "event",
+  name: "SessionKeyMerchantSet",
+  inputs: [
+    { name: "vaultOwner", type: "address", indexed: true },
+    { name: "sessionKey", type: "address", indexed: true },
+    { name: "merchant", type: "address", indexed: true },
+    { name: "allowed", type: "bool", indexed: false },
+  ],
+} as const;
+
+export const SESSION_KEY_REVOKED_EVENT = {
+  type: "event",
+  name: "SessionKeyRevoked",
+  inputs: [
+    { name: "vaultOwner", type: "address", indexed: true },
+    { name: "sessionKey", type: "address", indexed: true },
+  ],
+} as const;
 
 export const CARD_MINTED_EVENT = {
   type: "event",
@@ -129,6 +180,13 @@ const CARD_COMPONENTS = [
   { name: "merchantScope", type: "address" },
   { name: "expiry", type: "uint64" },
   { name: "status", type: "uint8" },
+] as const;
+
+const SESSION_POLICY_COMPONENTS = [
+  { name: "capPerCard", type: "uint256" },
+  { name: "dailyCap", type: "uint256" },
+  { name: "maxExpiry", type: "uint64" },
+  { name: "active", type: "bool" },
 ] as const;
 
 const CARD_APPROVAL_COMPONENTS = [
@@ -204,6 +262,61 @@ export const cardVaultAbi = [
     inputs: [{ name: "cardId", type: "uint256" }],
     outputs: [],
   },
+  {
+    type: "function",
+    name: "sessionPolicy",
+    stateMutability: "view",
+    inputs: [
+      { name: "vaultOwner", type: "address" },
+      { name: "sessionKey", type: "address" },
+    ],
+    outputs: [{ name: "", type: "tuple", components: SESSION_POLICY_COMPONENTS }],
+  },
+  {
+    type: "function",
+    name: "isMerchantAllowed",
+    stateMutability: "view",
+    inputs: [
+      { name: "vaultOwner", type: "address" },
+      { name: "sessionKey", type: "address" },
+      { name: "merchant", type: "address" },
+    ],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "registerSessionKey",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "sessionKey", type: "address" },
+      { name: "capPerCard", type: "uint256" },
+      { name: "dailyCap", type: "uint256" },
+      { name: "maxExpiry", type: "uint64" },
+      { name: "merchants", type: "address[]" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "setSessionKeyMerchant",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "sessionKey", type: "address" },
+      { name: "merchant", type: "address" },
+      { name: "allowed", type: "bool" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "revokeSessionKey",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "sessionKey", type: "address" }],
+    outputs: [],
+  },
+  SESSION_KEY_REGISTERED_EVENT,
+  SESSION_KEY_MERCHANT_SET_EVENT,
+  SESSION_KEY_REVOKED_EVENT,
   CARD_MINTED_EVENT,
   CARD_CHARGED_EVENT,
   CARD_CANCELLED_EVENT,

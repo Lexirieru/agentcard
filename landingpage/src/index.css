@@ -23,10 +23,23 @@
   font-family: 'Helvetica Neue Roman', 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
 
-html,
+/* The `*` rule above wins over inherited families, so mono has to be re-declared
+   on descendants the same way `.font-helvetica-neue` does. */
+.font-code,
+.font-code * {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+}
+
+html {
+  height: 100%;
+}
+
+/* min-height, not height: the document grows past one viewport once the
+   scroll-locked intro releases. */
 body,
 #root {
-  height: 100%;
+  min-height: 100%;
 }
 
 @keyframes fadeSlideUp {
@@ -58,4 +71,13 @@ body,
 .anim-fade {
   opacity: 0;
   animation: fadeIn 1s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-stagger,
+  .anim-fade {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
 }
