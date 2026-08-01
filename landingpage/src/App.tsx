@@ -8,6 +8,7 @@ import {
   type RefObject,
 } from 'react'
 import { ArrowUpRight, Check, Copy, Menu, Play, Plus, User, X } from 'lucide-react'
+import gsap from 'gsap'
 
 const BG_IMAGE_1 =
   'https://images.higgs.ai/?default=1&output=webp&url=https%3A%2F%2Fd8j0ntlcm91z4.cloudfront.net%2Fuser_38xzZboKViGWJOttwIXH07lWA1P%2Fhf_20260721_161708_64fad17a-06cc-4227-b6d2-1fefec159ec7.png&w=1920&q=85'
@@ -52,13 +53,26 @@ const NAV_ITEMS: NavItem[] = [
 
 const INSTALL_COMMAND = 'npx giwacard'
 
-const TRANSCRIPT: { speaker: 'you' | 'agent'; text: string }[] = [
+/**
+ * Two exchanges. The first shows a purchase completing; the second shows one
+ * being stopped. The second is the product's actual argument — the agent wanted
+ * to pay, and the limit held without anyone watching — so it types last and its
+ * closing line is emphasised.
+ */
+const TRANSCRIPT: { speaker: 'you' | 'agent'; text: string; emphasis?: boolean }[] = [
   { speaker: 'you', text: 'pay for the GIWA Insights report' },
   {
     speaker: 'agent',
     text: 'minting a card — 1 gUSD, one merchant, expires in 5 minutes',
   },
   { speaker: 'agent', text: 'paid. the card is dead now, and the change came back.' },
+  { speaker: 'you', text: 'put my Claude subscription on giwacard' },
+  { speaker: 'agent', text: 'that is 20 gUSD a month — over your 10 gUSD cap' },
+  {
+    speaker: 'agent',
+    text: 'queued for your approval. nothing has moved.',
+    emphasis: true,
+  },
 ]
 
 const FEATURES: { title: string; body: ReactNode }[] = [
@@ -505,69 +519,136 @@ function CardSection({
   )
 }
 
+/**
+ * Types the transcript out on a GSAP timeline the first time it scrolls into
+ * view. A pause before each agent reply makes the exchange read as a
+ * conversation rather than as text appearing. It plays once — a transcript that
+ * loops forever competes with the prose around it.
+ */
+function useTypedTranscript(active: boolean) {
+  const [typed, setTyped] = useState<string[]>(() => TRANSCRIPT.map(() => ''))
+  const [typingIndex, setTypingIndex] = useState(-1)
+  const [visibleCount, setVisibleCount] = useState(-1)
+  const [thinking, setThinking] = useState(false)
+  const played = useRef(false)
+
+  useEffect(() => {
+    if (!active || played.current) return
+    played.current = true
+
+    if (prefersReducedMotion()) {
+      setTyped(TRANSCRIPT.map((e) => e.text))
+      setVisibleCount(TRANSCRIPT.length)
+      return
+    }
+
+    const tl = gsap.timeline()
+
+    TRANSCRIPT.forEach((entry, i) => {
+      // Agents pause before answering; you do not pause before your own line.
+      if (entry.speaker === 'agent') {
+        tl.call(() => setThinking(true))
+        tl.to({}, { duration: 0.55 })
+        tl.call(() => setThinking(false))
+      }
+
+      const counter = { n: 0 }
+      tl.call(() => {
+        setVisibleCount(i)
+        setTypingIndex(i)
+      })
+      tl.to(counter, {
+        n: entry.text.length,
+        duration: Math.min(1.5, 0.22 + entry.text.length * 0.016),
+        ease: 'none',
+        onUpdate: () => {
+          const n = Math.round(counter.n)
+          setTyped((prev) => {
+            if (prev[i]?.length === n) return prev
+            const next = [...prev]
+            next[i] = entry.text.slice(0, n)
+            return next
+          })
+        },
+      })
+      tl.to({}, { duration: 0.28 })
+    })
+
+    tl.call(() => setTypingIndex(-1))
+
+    return () => {
+      tl.kill()
+    }
+  }, [active])
+
+  return { typed, typingIndex, visibleCount, thinking }
+}
+
 function ChatDemoSection() {
   const [ref, inView] = useInView<HTMLDivElement>()
-  const line = inView ? 'anim-stagger' : 'opacity-0'
+  const { typed, typingIndex, visibleCount, thinking } = useTypedTranscript(inView)
 
   return (
-    <section className={`${GUTTER} scroll-mt-24 pb-16 pt-24 sm:pb-24 sm:pt-32`}>
-      <div className={`${CONTAINER} ${NARROW}`}>
-        <Reveal>
-          <p className={EYEBROW}>One purchase, start to finish</p>
-        </Reveal>
+    <section
+      ref={ref}
+      className={`${GUTTER} scroll-mt-24 bg-[#0A0B11] py-24 sm:py-32`}
+    >
+      <div className={CONTAINER}>
+        <div className="flex flex-col gap-6 sm:gap-8">
+          {TRANSCRIPT.map((entry, i) => {
+            const shown = typed[i] ?? ''
+            if (!shown && i > visibleCount) return null
 
-        <div
-          ref={ref}
-          className="mt-6 overflow-hidden rounded-3xl border border-[#18161B]/10 bg-[#0A0B11] p-5 shadow-[0_24px_60px_-32px_rgba(10,11,17,0.6)] sm:p-8"
-        >
-          <div
-            className={`flex items-center justify-between gap-4 border-b border-white/10 pb-4 ${line}`}
-            style={{ animationDelay: '0.05s' }}
-          >
-            <div className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-white/20" />
-              <span className="h-2 w-2 rounded-full bg-white/15" />
-              <span className="h-2 w-2 rounded-full bg-white/10" />
-            </div>
-            <span className="font-code text-[10px] uppercase tracking-[0.18em] text-white/30 sm:text-[11px]">
-              giwa sepolia
-            </span>
-          </div>
+            const isYou = entry.speaker === 'you'
+            // Label only above the first bubble of a run by the same speaker.
+            const startsRun = i === 0 || TRANSCRIPT[i - 1]?.speaker !== entry.speaker
 
-          <div className="mt-6 flex flex-col gap-5">
-            {TRANSCRIPT.map((entry, i) => (
+            return (
               <div
                 key={entry.text}
-                className={`flex flex-col gap-1.5 sm:flex-row sm:items-start sm:gap-5 ${line}`}
-                style={{ animationDelay: `${0.22 + i * 0.18}s` }}
+                className={`flex flex-col ${isYou ? 'items-start' : 'items-end'}`}
               >
-                <span
-                  className={`font-code shrink-0 text-[10px] uppercase tracking-[0.18em] sm:w-14 sm:pt-3 sm:text-[11px] ${
-                    entry.speaker === 'you' ? 'text-white/35' : 'text-[#F4F0ED]/70'
+                {startsRun && (
+                  <span className="mb-3 px-2 text-sm text-white/40 sm:text-[15px]">
+                    {isYou ? 'User:' : 'Agent:'}
+                  </span>
+                )}
+                <div
+                  className={`max-w-[92%] rounded-full px-7 py-4 sm:max-w-[85%] sm:px-10 sm:py-6 ${
+                    isYou ? 'bg-white/[0.08] text-white' : 'bg-[#3B6BF5] text-white'
                   }`}
+                  style={{
+                    fontSize: 'clamp(1.5rem, 5.2vw, 4rem)',
+                    lineHeight: 1.06,
+                    letterSpacing: '-0.02em',
+                  }}
                 >
-                  {entry.speaker}
-                </span>
-                <p
-                  className={`font-code w-fit max-w-full break-words rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed sm:text-[15px] ${
-                    entry.speaker === 'you'
-                      ? 'border border-white/15 text-white'
-                      : 'bg-white/[0.07] text-white/80'
-                  }`}
-                >
-                  {entry.text}
-                </p>
+                  <span className="font-light">{shown}</span>
+                  {i === typingIndex && (
+                    <span className="ml-1 inline-block h-[0.75em] w-[0.06em] animate-pulse bg-current align-middle" />
+                  )}
+                </div>
               </div>
-            ))}
-          </div>
+            )
+          })}
+
+          {thinking && (
+            <div className="flex justify-end gap-2 pr-8">
+              {[0, 1, 2].map((d) => (
+                <span
+                  key={d}
+                  className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#3B6BF5]"
+                  style={{ animationDelay: `${d * 0.15}s` }}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
-        <Reveal delay={0.1}>
-          <p className="mt-6 max-w-xl text-[15px] leading-relaxed text-[#18161B]/60">
-            No standing balance, no approval the agent can widen later. The card exists for
-            one charge and the vault settles the rest back to you.
-          </p>
-        </Reveal>
+        <p className="mt-16 max-w-xl text-[15px] leading-relaxed text-white/50">
+          No standing balance, and no approval the agent can widen later. The card
+          exists for one charge, and the vault settles the rest back to you.
+        </p>
       </div>
     </section>
   )
