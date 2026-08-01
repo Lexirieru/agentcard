@@ -23,7 +23,11 @@ import {
   writeSecretFile,
   type SqlDatabase,
 } from './db.js'
-import { DaemonSchemaVersionError } from './errors.js'
+import {
+  DaemonSchemaVersionError,
+  MINIMUM_NODE_VERSION,
+  SqliteUnavailableError,
+} from './errors.js'
 
 let dir: string
 const open: SqlDatabase[] = []
@@ -48,6 +52,24 @@ async function openDb(): Promise<SqlDatabase> {
   open.push(db)
   return db
 }
+
+describe('the SQLite requirement', () => {
+  test('the error names the version the package requires, and the one running', () => {
+    // Reachable long after a clean install, from an MCP server the user never
+    // launched by hand: "upgrade Node" is unactionable without both numbers.
+    const error = new SqliteUnavailableError()
+    expect(error.message).toContain(MINIMUM_NODE_VERSION)
+    expect(error.message).toContain(process.version)
+    expect(error.details).toMatchObject({
+      required: MINIMUM_NODE_VERSION,
+      running: process.version,
+    })
+    // It also says what still works, so a user on Node 20 knows the install is
+    // not a total loss.
+    expect(error.message).toContain('in-policy card minting works without it')
+  })
+
+})
 
 describe('paths', () => {
   test('all daemon files live inside the giwacard home', () => {
