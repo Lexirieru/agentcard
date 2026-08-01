@@ -1,4 +1,11 @@
-import { parseEventLogs, type Address, type Hex } from 'viem'
+import {
+  getAddress,
+  isAddress,
+  isHex,
+  parseEventLogs,
+  type Address,
+  type Hex,
+} from 'viem'
 
 import {
   cardVaultAbi,
@@ -6,10 +13,15 @@ import {
   type VaultCard,
   type VaultSessionPolicy,
 } from '../chain/cardVaultAbi.js'
-import { sessionAddress, type GiwaCardMcpContext } from './context.js'
+import {
+  sessionAddress,
+  type FacilitatorFetch,
+  type FacilitatorResponse,
+  type GiwaCardMcpContext,
+} from './context.js'
 import {
   McpToolError,
-  merchantOutOfScopeError,
+  merchantRefusalError,
   noGasError,
   toMcpError,
 } from './errors.js'
@@ -24,6 +36,11 @@ import {
  *
  * Every function here funnels its failures through {@link toMcpError}, so a
  * revert is already an agent-facing code by the time a tool sees it.
+ *
+ * The KTD-9 pay flow lives at the bottom of this file and is the one thing here
+ * that is *not* a chain call: since the merchant submits `CardVault.charge`,
+ * paying is an HTTP request naming a card. It is kept alongside the vault code
+ * because the thing it presents — a cardId — is minted by the code above it.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -329,101 +346,304 @@ export async function cancelCard(
 }
 
 /* -------------------------------------------------------------------------- */
-/* KTD-9: paying a merchant                                                   */
+/* KTD-9: presenting a card to a merchant                                     */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * ## Which way the money moves
+ *
+ * `CardVault.charge` requires `msg.sender == card.merchantScope` and transfers
+ * the funds to `msg.sender`. So the **merchant** submits it, exactly like a real
+ * card: the holder presents the card, and the merchant is the one who runs it.
+ * This client never calls `charge` — if it did, the vault would revert with
+ * `MerchantScopeMismatch` and nobody would be paid.
+ *
+ * What that leaves on this side is pleasantly small, and worth stating because
+ * it is easy to reintroduce the old shape by accident:
+ *
+ * - no transaction, therefore **no gas**: presenting a card costs the session
+ *   key nothing, and `NO_GAS` is not reachable from this path;
+ * - no receipt to hand over, therefore no `txHash` in `X-PAYMENT` — the header
+ *   carries the **cardId**, plus the vault and chain the client expects, so a
+ *   misconfigured merchant refuses rather than charging through some other
+ *   contract;
+ * - the settlement transaction hash comes **back**, in `PAYMENT-RESPONSE`. It is
+ *   a public identifier and is surfaced to the agent as `txHash`, a field name
+ *   the redaction backstop allowlists (`redact.ts`, `PUBLIC_HASH_FIELD_NAMES`).
+ *
+ * Everything else in the merchant's response is text a stranger wrote. Only the
+ * fields below are read out of it, each validated by shape; the merchant's own
+ * prose never becomes an agent-facing error message (AE7).
+ */
+
+/** Chain id of GIWA Sepolia, used when no facilitator config overrides it. */
+const GIWA_SEPOLIA_CHAIN_ID = 91_342
+
+/** Scheme id shared with `merchant/src/x402.ts`. Must match byte for byte. */
+export const GIWA_VAULT_CHARGE_SCHEME = 'giwa-vault-charge' as const
+
+/** x402 protocol version this client speaks. */
+export const X402_VERSION = 1 as const
+
+/** Request header naming the card being presented. */
+export const PAYMENT_HEADER = 'X-PAYMENT' as const
+
+/** Response header carrying the merchant's settlement receipt. */
+export const PAYMENT_RESPONSE_HEADER = 'PAYMENT-RESPONSE' as const
 
 /** The payload carried by the `X-PAYMENT` header, before base64 encoding. */
 export interface GiwaCardPaymentPayload {
-  scheme: 'giwacard-charge'
-  /** Chain the charge settled on, so the facilitator looks in the right place. */
+  x402Version: typeof X402_VERSION
+  scheme: typeof GIWA_VAULT_CHARGE_SCHEME
+  /** Network the card must be settled on. */
   network: string
-  vault: Address
-  cardId: string
-  amount: string
-  merchant: Address
-  /** The facilitator verifies the `CardCharged` event in this transaction. */
-  txHash: Hex
-}
-
-/** A completed payment: the settled charge plus the header to send with it. */
-export interface PaymentResult {
-  payload: GiwaCardPaymentPayload
-  /** Base64 JSON, the value of the `X-PAYMENT` header. */
-  header: string
-  txHash: Hex
-  /** Unspent cap returned to the vault owner's available balance. */
-  released: bigint
-}
-
-export interface PayMerchantInput {
-  cardId: bigint
-  amount: bigint
-  merchant: Address
+  payload: {
+    /** The card being presented. The merchant charges this and nothing else. */
+    cardId: string
+    /** Vault the card lives in; the merchant refuses if it settles elsewhere. */
+    vault: Address
+    /** Chain id the card lives on. */
+    chainId: number
+  }
 }
 
 /**
- * Charge a card and produce the `X-PAYMENT` header for the merchant (KTD-9).
+ * The merchant's settlement receipt, reduced to the fields we can validate.
+ *
+ * Deliberately *not* the merchant's JSON passed through: a receipt is written by
+ * the counterparty, and an agent reads whatever we return. Every field here is
+ * shape-checked before it survives the copy.
+ */
+export interface PaymentSettlement {
+  /** The merchant's own `CardVault.charge` transaction. Public. */
+  txHash: Hex
+  /** Card the merchant charged. Should be the one presented. */
+  cardId: string
+  /** Amount moved, in token base units. */
+  amount: string
+  /** Unspent cap returned to the vault owner's available balance. */
+  released: string
+  /** Address the merchant paid itself — the card's `merchantScope`. */
+  payee: Address
+  /** Vault that emitted the verified `CardCharged` event. */
+  vault: Address
+  /** Block the settlement landed in. */
+  blockNumber: string
+}
+
+/** A completed payment: what was sent, what came back, and the product. */
+export interface PaymentResult {
+  /** Decoded form of the `X-PAYMENT` header that was sent. */
+  payload: GiwaCardPaymentPayload
+  /** Base64 JSON, the exact value of the `X-PAYMENT` header. */
+  header: string
+  /** HTTP status of the paid response. Always 2xx here; failures throw. */
+  status: number
+  /**
+   * The merchant's settlement receipt, or `null` when it served the product
+   * without one. Absent proof is not a reason to reject a product we asked for
+   * and received, but it *is* worth the agent knowing.
+   */
+  settlement: PaymentSettlement | null
+  /**
+   * Settlement transaction hash, hoisted for convenience. Public, and named so
+   * the redaction backstop lets it through.
+   */
+  txHash: Hex | null
+  /** The merchant's response body: the product. Untrusted content. */
+  body: unknown
+}
+
+export interface PayMerchantInput {
+  /** Card to present. Minted scoped to this merchant. */
+  cardId: bigint
+  /** Absolute URL of the paid resource, from the merchant's 402 requirements. */
+  resource: string
+}
+
+/** Build the `X-PAYMENT` payload for a card. Pure, so it is trivially testable. */
+export function buildPaymentPayload(
+  context: GiwaCardMcpContext,
+  cardId: bigint,
+): GiwaCardPaymentPayload {
+  return {
+    x402Version: X402_VERSION,
+    scheme: GIWA_VAULT_CHARGE_SCHEME,
+    network: context.facilitator?.network ?? 'giwa-sepolia',
+    payload: {
+      cardId: cardId.toString(),
+      vault: context.vaultAddress,
+      chainId: context.facilitator?.chainId ?? GIWA_SEPOLIA_CHAIN_ID,
+    },
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** A decimal string, or `null` if the merchant sent something else. */
+function decimalField(source: Record<string, unknown>, key: string): string | null {
+  const value = source[key]
+  if (typeof value === 'string' && /^\d+$/.test(value)) return value
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
+    return String(value)
+  }
+  return null
+}
+
+/** A 20-byte address, or `null`. */
+function addressField(source: Record<string, unknown>, key: string): Address | null {
+  const value = source[key]
+  return typeof value === 'string' && isAddress(value) ? getAddress(value) : null
+}
+
+/** A 32-byte hash, or `null`. */
+function hashField(source: Record<string, unknown>, key: string): Hex | null {
+  const value = source[key]
+  if (typeof value !== 'string' || !isHex(value) || value.length !== 66) return null
+  return value.toLowerCase() as Hex
+}
+
+/**
+ * Decode a `PAYMENT-RESPONSE` header into the fields we are willing to repeat.
+ *
+ * Returns `null` rather than throwing when the receipt is missing or unreadable:
+ * the merchant already served the product, and refusing to return a report we
+ * paid for because its receipt was malformed would be a strange trade.
+ */
+export function parseSettlementHeader(raw: string | null): PaymentSettlement | null {
+  if (raw === null || raw.trim() === '') return null
+
+  let decoded: unknown
+  try {
+    const text = raw.trim().startsWith('{')
+      ? raw.trim()
+      : Buffer.from(raw.trim(), 'base64').toString('utf8')
+    decoded = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (!isRecord(decoded)) return null
+
+  const txHash = hashField(decoded, 'transaction')
+  const payee = addressField(decoded, 'payee')
+  const vault = addressField(decoded, 'vault')
+  const cardId = decimalField(decoded, 'cardId')
+  const amount = decimalField(decoded, 'amount')
+  if (txHash === null || payee === null || vault === null || cardId === null) {
+    return null
+  }
+
+  return {
+    txHash,
+    cardId,
+    amount: amount ?? '0',
+    released: decimalField(decoded, 'released') ?? '0',
+    payee,
+    vault,
+    blockNumber: decimalField(decoded, 'blockNumber') ?? '0',
+  }
+}
+
+/**
+ * Present a card to a merchant and collect the product it sells (KTD-9).
  *
  * Internal by construction: no MCP tool exposes it, and an agent never handles
- * payment material itself. The flow is submit `CardVault.charge(cardId,
- * amount)`, read the `CardCharged` event back out of the receipt, and hand the
- * merchant a header naming the transaction — the facilitator verifies the event
- * onchain rather than trusting anything in the header.
+ * payment material itself. The whole client-side flow is one request carrying
+ * one header. The merchant charges the card, verifies its own transaction, and
+ * returns the product with a `PAYMENT-RESPONSE` receipt naming the settlement.
  *
- * The vault settles a charge to `msg.sender` and enforces
- * `card.merchantScope == msg.sender`, so a scope mismatch surfaces here as AE7
- * {@link merchantOutOfScopeError}.
+ * Failures are mapped through {@link mapMerchantRefusal}, so a card that is
+ * spent, expired or scoped elsewhere reaches the agent as the same stable code
+ * it would have got from a local revert.
+ *
+ * @throws {McpToolError} for any non-2xx response, or an unreachable merchant.
  */
 export async function payMerchant(
   context: GiwaCardMcpContext,
   input: PayMerchantInput,
 ): Promise<PaymentResult> {
-  await assertCanPayGas(context)
+  const payload = buildPaymentPayload(context, input.cardId)
+  const header = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64')
+  const fetchImpl: FacilitatorFetch = context.facilitator?.fetch ?? globalThis.fetch
 
-  const { txHash, receipt } = await submit(context, context.sessionClient, 'charge', [
-    input.cardId,
-    input.amount,
-  ])
-
-  const charged = parseEventLogs({
-    abi: cardVaultAbi,
-    eventName: 'CardCharged',
-    logs: receipt.logs as never,
-  })[0]
-
-  if (!charged) {
+  let response: FacilitatorResponse
+  try {
+    response = await fetchImpl(input.resource, {
+      headers: { [PAYMENT_HEADER]: header },
+    })
+  } catch (cause) {
     throw new McpToolError(
       'RPC_UNAVAILABLE',
-      `The charge transaction ${txHash} succeeded but emitted no CardCharged ` +
-        'event, so there is nothing the merchant can verify. Do not retry ' +
-        'blindly — re-read the card first.',
-      { details: { txHash } },
+      `The merchant at ${input.resource} could not be reached. Nothing was ` +
+        'charged — the card is still spendable. Retry in a few seconds.',
+      { retryable: true, cause, details: { cardId: input.cardId.toString() } },
     )
   }
 
-  if (
-    (charged.args.merchant as string).toLowerCase() !==
-    input.merchant.toLowerCase()
-  ) {
-    throw merchantOutOfScopeError(input.merchant, 'charge')
+  if (!response.ok) {
+    throw await mapMerchantRefusal(response, input.cardId)
   }
 
-  const payload: GiwaCardPaymentPayload = {
-    scheme: 'giwacard-charge',
-    network: context.facilitator?.network ?? 'giwa-sepolia',
-    vault: context.vaultAddress,
-    cardId: input.cardId.toString(),
-    amount: (charged.args.amount as bigint).toString(),
-    merchant: input.merchant,
-    txHash,
+  const settlement = parseSettlementHeader(
+    response.headers.get(PAYMENT_RESPONSE_HEADER),
+  )
+
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    // A merchant that served 200 with an unreadable body still charged the
+    // card, so this is not a payment failure; the agent gets the receipt and an
+    // empty product rather than an error that invites a second card.
+    body = null
   }
 
   return {
     payload,
-    header: Buffer.from(JSON.stringify(payload), 'utf8').toString('base64'),
-    txHash,
-    released: charged.args.released as bigint,
+    header,
+    status: response.status,
+    settlement,
+    txHash: settlement?.txHash ?? null,
+    body,
   }
+}
+
+/**
+ * Turn a merchant's refusal into the agent-facing taxonomy.
+ *
+ * Only the machine-readable `reason` and the advertised `payTo` are read out of
+ * the body; the merchant's prose is never quoted back to the agent. That is not
+ * fastidiousness — a paid API that can put text into an agent's context is a
+ * prompt-injection surface, and the 402 body is the one part of the exchange an
+ * attacker controls for free (AE7).
+ */
+async function mapMerchantRefusal(
+  response: FacilitatorResponse,
+  cardId: bigint,
+): Promise<McpToolError> {
+  let reason: string | null = null
+  let payTo: Address | null = null
+  try {
+    const body: unknown = await response.json()
+    if (isRecord(body)) {
+      if (typeof body['reason'] === 'string') reason = body['reason']
+      const accepts = body['accepts']
+      const first = Array.isArray(accepts) ? accepts[0] : undefined
+      if (isRecord(first)) payTo = addressField(first, 'payTo')
+    }
+  } catch {
+    // A refusal with no readable body still refuses; fall through to the
+    // status-based mapping below.
+  }
+
+  return merchantRefusalError({
+    reason,
+    status: response.status,
+    cardId: cardId.toString(),
+    merchant: payTo,
+  })
 }
 
 /* -------------------------------------------------------------------------- */

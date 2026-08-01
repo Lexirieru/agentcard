@@ -5,20 +5,37 @@ import {
   GUSD_DECIMALS,
   GUSD_SYMBOL,
   MerchantConfigError,
+  REQUIRED_ENV_VARS,
   defineMerchantConfig,
   formatAtomic,
   loadMerchantConfig,
   parsePriceToAtomic,
+  parsePrivateKey,
   type EnvBag,
 } from '../src/config.js'
 
-import { MERCHANT_ADDRESS, TOKEN_ADDRESS, VAULT_ADDRESS } from './fixtures.js'
+import {
+  FOREIGN_PRIVATE_KEY,
+  MERCHANT_ADDRESS,
+  MERCHANT_PRIVATE_KEY,
+  TOKEN_ADDRESS,
+  VAULT_ADDRESS,
+} from './fixtures.js'
 
 const REQUIRED: EnvBag = {
   MERCHANT_ADDRESS,
+  MERCHANT_PRIVATE_KEY,
   CARD_VAULT_ADDRESS: VAULT_ADDRESS,
   GUSD_ADDRESS: TOKEN_ADDRESS,
 }
+
+/** The three addresses plus the key, i.e. everything `defineMerchantConfig` needs. */
+const BASE = {
+  merchantAddress: MERCHANT_ADDRESS,
+  merchantPrivateKey: MERCHANT_PRIVATE_KEY,
+  vaultAddress: VAULT_ADDRESS,
+  tokenAddress: TOKEN_ADDRESS,
+} as const
 
 /** Assert a config failure names the setting at fault. */
 function expectConfigError(build: () => unknown, setting: string): MerchantConfigError {
@@ -35,9 +52,7 @@ function expectConfigError(build: () => unknown, setting: string): MerchantConfi
 describe('defineMerchantConfig', () => {
   test('applies the demo defaults', () => {
     const config = defineMerchantConfig({
-      merchantAddress: MERCHANT_ADDRESS,
-      vaultAddress: VAULT_ADDRESS,
-      tokenAddress: TOKEN_ADDRESS,
+      ...BASE,
     })
     expect(config.priceAtomic).toBe(1_000_000n)
     expect(config.priceDisplay).toBe('1')
@@ -55,6 +70,7 @@ describe('defineMerchantConfig', () => {
 
   test('checksums the addresses it is given', () => {
     const config = defineMerchantConfig({
+      ...BASE,
       merchantAddress: MERCHANT_ADDRESS.toLowerCase(),
       vaultAddress: VAULT_ADDRESS.toLowerCase(),
       tokenAddress: TOKEN_ADDRESS.toLowerCase(),
@@ -65,9 +81,7 @@ describe('defineMerchantConfig', () => {
 
   test('is frozen, so a request handler cannot mutate the price', () => {
     const config = defineMerchantConfig({
-      merchantAddress: MERCHANT_ADDRESS,
-      vaultAddress: VAULT_ADDRESS,
-      tokenAddress: TOKEN_ADDRESS,
+      ...BASE,
     })
     expect(Object.isFrozen(config)).toBe(true)
   })
@@ -76,26 +90,23 @@ describe('defineMerchantConfig', () => {
     expectConfigError(
       () =>
         defineMerchantConfig({
+          ...BASE,
           merchantAddress: '',
-          vaultAddress: VAULT_ADDRESS,
-          tokenAddress: TOKEN_ADDRESS,
         }),
       'MERCHANT_ADDRESS',
     )
     expectConfigError(
       () =>
         defineMerchantConfig({
-          merchantAddress: MERCHANT_ADDRESS,
+          ...BASE,
           vaultAddress: '',
-          tokenAddress: TOKEN_ADDRESS,
         }),
       'CARD_VAULT_ADDRESS',
     )
     expectConfigError(
       () =>
         defineMerchantConfig({
-          merchantAddress: MERCHANT_ADDRESS,
-          vaultAddress: VAULT_ADDRESS,
+          ...BASE,
           tokenAddress: '',
         }),
       'GUSD_ADDRESS',
@@ -106,30 +117,72 @@ describe('defineMerchantConfig', () => {
     expectConfigError(
       () =>
         defineMerchantConfig({
+          ...BASE,
           merchantAddress: '0x1234',
-          vaultAddress: VAULT_ADDRESS,
-          tokenAddress: TOKEN_ADDRESS,
         }),
       'MERCHANT_ADDRESS',
     )
     expectConfigError(
       () =>
         defineMerchantConfig({
+          ...BASE,
           merchantAddress: '0x0000000000000000000000000000000000000000',
-          vaultAddress: VAULT_ADDRESS,
-          tokenAddress: TOKEN_ADDRESS,
         }),
       'MERCHANT_ADDRESS',
     )
+  })
+
+  test('exposes the merchant signing key, derived-address checked', () => {
+    const config = defineMerchantConfig(BASE)
+    expect(config.merchantPrivateKey).toBe(MERCHANT_PRIVATE_KEY)
+    expect(config.merchantAddress).toBe(MERCHANT_ADDRESS)
+  })
+
+  test('rejects a missing private key, explaining why the merchant needs one', () => {
+    const error = expectConfigError(
+      () => defineMerchantConfig({ ...BASE, merchantPrivateKey: '' }),
+      'MERCHANT_PRIVATE_KEY',
+    )
+    expect(error.message).toContain('funded EOA')
+    expect(error.message).toContain('CardVault.charge')
+  })
+
+  test('rejects a malformed private key without echoing it', () => {
+    for (const bad of ['0xdeadbeef', 'not-hex', `0x${'11'.repeat(31)}`]) {
+      const error = expectConfigError(
+        () => defineMerchantConfig({ ...BASE, merchantPrivateKey: bad }),
+        'MERCHANT_PRIVATE_KEY',
+      )
+      expect(error.message).not.toContain(bad)
+    }
+  })
+
+  test('accepts a key with no 0x prefix', () => {
+    const config = defineMerchantConfig({
+      ...BASE,
+      merchantPrivateKey: MERCHANT_PRIVATE_KEY.slice(2),
+    })
+    expect(config.merchantPrivateKey).toBe(MERCHANT_PRIVATE_KEY)
+  })
+
+  test('rejects a key for some other address, because every charge would revert', () => {
+    // CardVault.charge requires msg.sender == card.merchantScope. A merchant
+    // holding the wrong key starts fine and then fails every settlement, which
+    // is the worst possible time to find out.
+    const error = expectConfigError(
+      () => defineMerchantConfig({ ...BASE, merchantPrivateKey: FOREIGN_PRIVATE_KEY }),
+      'MERCHANT_PRIVATE_KEY',
+    )
+    expect(error.message).toContain('msg.sender == card.merchantScope')
+    expect(error.message).toContain(MERCHANT_ADDRESS)
   })
 
   test('rejects a merchant that is also the vault', () => {
     const error = expectConfigError(
       () =>
         defineMerchantConfig({
+          ...BASE,
           merchantAddress: VAULT_ADDRESS,
-          vaultAddress: VAULT_ADDRESS,
-          tokenAddress: TOKEN_ADDRESS,
         }),
       'MERCHANT_ADDRESS',
     )
@@ -140,9 +193,7 @@ describe('defineMerchantConfig', () => {
     expectConfigError(
       () =>
         defineMerchantConfig({
-          merchantAddress: MERCHANT_ADDRESS,
-          vaultAddress: VAULT_ADDRESS,
-          tokenAddress: TOKEN_ADDRESS,
+          ...BASE,
           port: 70_000,
         }),
       'MERCHANT_PORT',
@@ -150,9 +201,7 @@ describe('defineMerchantConfig', () => {
     expectConfigError(
       () =>
         defineMerchantConfig({
-          merchantAddress: MERCHANT_ADDRESS,
-          vaultAddress: VAULT_ADDRESS,
-          tokenAddress: TOKEN_ADDRESS,
+          ...BASE,
           insightsBlockCount: 1,
         }),
       'MERCHANT_INSIGHTS_BLOCKS',
@@ -163,9 +212,7 @@ describe('defineMerchantConfig', () => {
     expectConfigError(
       () =>
         defineMerchantConfig({
-          merchantAddress: MERCHANT_ADDRESS,
-          vaultAddress: VAULT_ADDRESS,
-          tokenAddress: TOKEN_ADDRESS,
+          ...BASE,
           baseUrl: 'ftp://example.com',
         }),
       'MERCHANT_BASE_URL',
@@ -190,6 +237,27 @@ describe('parsePriceToAtomic', () => {
   test('rejects more precision than the token has', () => {
     const error = expectConfigError(() => parsePriceToAtomic('P', '0.0000001', 6), 'P')
     expect(error.message).toContain('only has 6')
+  })
+})
+
+describe('parsePrivateKey', () => {
+  test('derives the address of a well-formed key', () => {
+    expect(parsePrivateKey('K', MERCHANT_PRIVATE_KEY)).toEqual({
+      privateKey: MERCHANT_PRIVATE_KEY,
+      address: MERCHANT_ADDRESS,
+    })
+  })
+
+  test('never puts the key in the error it throws', () => {
+    const secret = `0x${'ab'.repeat(20)}`
+    const error = expectConfigError(() => parsePrivateKey('K', secret), 'K')
+    expect(error.message).not.toContain(secret)
+    expect(error.message).not.toContain('ab'.repeat(20))
+  })
+
+  test('rejects 32 bytes of hex that is not a valid scalar', () => {
+    // Zero is 32 valid hex bytes and is not a private key.
+    expectConfigError(() => parsePrivateKey('K', `0x${'00'.repeat(32)}`), 'K')
   })
 })
 
@@ -255,5 +323,22 @@ describe('loadMerchantConfig', () => {
 
   test('rejects an empty environment, naming the first missing variable', () => {
     expectConfigError(() => loadMerchantConfig({}), 'MERCHANT_ADDRESS')
+  })
+
+  test('rejects an environment with no MERCHANT_PRIVATE_KEY', () => {
+    const { MERCHANT_PRIVATE_KEY: _omitted, ...rest } = REQUIRED
+    expectConfigError(() => loadMerchantConfig(rest), 'MERCHANT_PRIVATE_KEY')
+  })
+
+  test('REQUIRED_ENV_VARS lists exactly the variables that have no default', () => {
+    // The startup banner in `server.ts` prints this list, so it drifting from
+    // the validator is how an operator gets told to set the wrong things.
+    expect([...REQUIRED_ENV_VARS].sort()).toEqual(
+      ['CARD_VAULT_ADDRESS', 'GUSD_ADDRESS', 'MERCHANT_ADDRESS', 'MERCHANT_PRIVATE_KEY'],
+    )
+    for (const name of REQUIRED_ENV_VARS) {
+      const { [name]: _omitted, ...rest } = REQUIRED
+      expectConfigError(() => loadMerchantConfig(rest), name)
+    }
   })
 })

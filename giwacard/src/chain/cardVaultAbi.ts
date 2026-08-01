@@ -163,6 +163,58 @@ const CARD_APPROVAL_COMPONENTS = [
 
 /** The fragments of `CardVault` this package calls, decodes or listens for. */
 export const cardVaultAbi = [
+  /* --------------------------------------------------- custody (owner-only) */
+  {
+    type: 'function',
+    name: 'deposit',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'amount', type: 'uint256' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'withdraw',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'amount', type: 'uint256' },
+      { name: 'to', type: 'address' },
+    ],
+    outputs: [],
+  },
+
+  /* ---------------------------------------------- session keys (owner-only) */
+  {
+    type: 'function',
+    name: 'registerSessionKey',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'sessionKey', type: 'address' },
+      { name: 'capPerCard', type: 'uint256' },
+      { name: 'dailyCap', type: 'uint256' },
+      { name: 'maxExpiry', type: 'uint64' },
+      { name: 'merchants', type: 'address[]' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'setSessionKeyMerchant',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'sessionKey', type: 'address' },
+      { name: 'merchant', type: 'address' },
+      { name: 'allowed', type: 'bool' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'revokeSessionKey',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'sessionKey', type: 'address' }],
+    outputs: [],
+  },
+
   /* ---------------------------------------------------------------- writes */
   {
     type: 'function',
@@ -316,6 +368,44 @@ export const cardVaultAbi = [
   },
 
   /* ---------------------------------------------------------------- events */
+  {
+    type: 'event',
+    name: 'Deposited',
+    inputs: [
+      { name: 'vaultOwner', type: 'address', indexed: true },
+      { name: 'amount', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'Withdrawn',
+    inputs: [
+      { name: 'vaultOwner', type: 'address', indexed: true },
+      { name: 'to', type: 'address', indexed: true },
+      { name: 'amount', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'SessionKeyRegistered',
+    inputs: [
+      { name: 'vaultOwner', type: 'address', indexed: true },
+      { name: 'sessionKey', type: 'address', indexed: true },
+      { name: 'capPerCard', type: 'uint256', indexed: false },
+      { name: 'dailyCap', type: 'uint256', indexed: false },
+      { name: 'maxExpiry', type: 'uint64', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'SessionKeyMerchantSet',
+    inputs: [
+      { name: 'vaultOwner', type: 'address', indexed: true },
+      { name: 'sessionKey', type: 'address', indexed: true },
+      { name: 'merchant', type: 'address', indexed: true },
+      { name: 'allowed', type: 'bool', indexed: false },
+    ],
+  },
   {
     type: 'event',
     name: 'CardMinted',

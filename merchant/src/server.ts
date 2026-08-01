@@ -6,13 +6,14 @@
  * The app itself is runtime-agnostic — `createMerchantApp` returns a Hono app
  * with a plain `fetch` handler — so this file is only the Bun-specific shell.
  *
- * Configuration comes from the environment; see `config.ts`. Note what is *not*
- * here: no private key, no mnemonic, no keystore. The merchant's facilitator
- * only reads the chain (KTD-9), so there is nothing for this process to sign
- * with and nothing to leak.
+ * Configuration comes from the environment; see `config.ts`. That now includes
+ * `MERCHANT_PRIVATE_KEY`: since KTD-9 the merchant submits `CardVault.charge`
+ * itself, so this process holds one secret and needs the account behind it
+ * funded with GIWA Sepolia ETH. A missing or mismatched key is a startup error
+ * here, not a 500 on the first paid request.
  */
 
-import { MerchantConfigError } from './config.js'
+import { MerchantConfigError, REQUIRED_ENV_VARS } from './config.js'
 import { createMerchantServiceFromEnv, INSIGHTS_PATH } from './index.js'
 
 function main(): void {
@@ -23,10 +24,13 @@ function main(): void {
     if (error instanceof MerchantConfigError) {
       process.stderr.write(
         `giwa-merchant: configuration error (${error.setting})\n  ${error.message}\n\n` +
-          'Required: MERCHANT_ADDRESS, CARD_VAULT_ADDRESS, GUSD_ADDRESS.\n' +
+          `Required: ${REQUIRED_ENV_VARS.join(', ')}.\n` +
           'Optional: MERCHANT_PRICE_GUSD, MERCHANT_BASE_URL, MERCHANT_PORT, GIWA_RPC_URL,\n' +
           '          MERCHANT_INSIGHTS_BLOCKS, MERCHANT_INSIGHTS_CONCURRENCY,\n' +
-          '          MERCHANT_PAYMENT_TIMEOUT_SECONDS.\n',
+          '          MERCHANT_PAYMENT_TIMEOUT_SECONDS.\n\n' +
+          'MERCHANT_PRIVATE_KEY must be the key of MERCHANT_ADDRESS, and that account must hold\n' +
+          'GIWA Sepolia ETH: the merchant submits CardVault.charge itself (KTD-9). One charge\n' +
+          'costs on the order of 1e-5 ETH, so one daily faucet claim covers hundreds of them.\n',
       )
       process.exit(1)
     }
@@ -43,7 +47,7 @@ function main(): void {
   process.stdout.write(
     `GIWA Insights merchant listening on http://localhost:${config.port}\n` +
       `  paid resource   GET ${INSIGHTS_PATH}  (${config.priceDisplay} ${config.tokenSymbol})\n` +
-      `  merchant        ${config.merchantAddress}\n` +
+      `  merchant        ${config.merchantAddress}  (submits CardVault.charge; keep it funded)\n` +
       `  vault           ${config.vaultAddress}\n` +
       `  asset           ${config.tokenAddress}\n` +
       `  chain           ${config.network} (${config.chainId}) via ${config.rpcUrl}\n` +

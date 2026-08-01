@@ -167,7 +167,17 @@ export function insufficientAvailableBalanceError(
   )
 }
 
-/** AE7 — the merchant is outside the session key's or the card's scope. */
+/**
+ * AE7 — the merchant is outside the session key's or the card's scope.
+ *
+ * Both contexts are still live, but they now arrive from opposite directions.
+ * `mint` is a local revert: the vault refuses to scope a card to a merchant this
+ * session key is not allowlisted for. `charge` is no longer a local revert at
+ * all — since KTD-9 the *merchant* submits `CardVault.charge`, so a card
+ * presented at the wrong merchant is refused by that merchant's facilitator and
+ * reaches us as a `merchant_scope_mismatch` in its 402. Same code, same advice,
+ * different messenger. See {@link merchantRefusalError}.
+ */
 export function merchantOutOfScopeError(
   merchant: string,
   context: 'mint' | 'charge' = 'mint',
@@ -178,8 +188,9 @@ export function merchantOutOfScopeError(
       ? `Merchant ${merchant} is not on this session key's allowlist, so no ` +
           'card can be scoped to it. Ask the vault owner to add it with ' +
           '`giwacard merchants add`. Raising the cap will not help.'
-      : `This card is not scoped to merchant ${merchant} and cannot be charged ` +
-          'by it. Use the card at the merchant it was minted for.',
+      : `Merchant ${merchant} could not charge this card: it is scoped to a ` +
+          'different merchant. Nothing was paid. Present it at the merchant it ' +
+          'was minted for, or mint a new card for this one.',
     { details: { merchant, context } },
   )
 }
@@ -196,6 +207,142 @@ export function sessionKeyRevokedError(
       'run `giwacard init` or re-register the key.',
     { details: { sessionKey, vaultOwner } },
   )
+}
+
+/* -------------------------------------------------------------------------- */
+/* Merchant refusals (KTD-9)                                                  */
+/* -------------------------------------------------------------------------- */
+
+/** What {@link merchantRefusalError} is told about a merchant's refusal. */
+export interface MerchantRefusal {
+  /** The merchant's machine-readable `reason`, or `null` if it sent none. */
+  reason: string | null
+  /** HTTP status of the refusal. */
+  status: number
+  /** Card that was presented. */
+  cardId: string
+  /** The merchant's advertised `payTo`, when its 402 body carried one. */
+  merchant?: string | null | undefined
+}
+
+/**
+ * Map a merchant facilitator's refusal onto the taxonomy.
+ *
+ * Since KTD-9 the merchant is the one who calls `CardVault.charge`, so the vault
+ * reverts an agent used to see locally now arrive as HTTP: `card_already_used`
+ * instead of a decoded `CardNotActive`, `merchant_scope_mismatch` instead of a
+ * decoded `MerchantScopeMismatch`. The **codes are unchanged** — an agent that
+ * branched on `CARD_ALREADY_USED` before still branches on it now — because the
+ * situation it describes is the same one; only the messenger moved.
+ *
+ * Two properties are load-bearing in the messages, and both are true of the
+ * merchant we ship:
+ *
+ * - each message says whether the card was charged, because "retry with the same
+ *   card" and "mint a new one" are opposite instructions and an agent cannot
+ *   guess which applies;
+ * - none of them quotes the merchant's prose. A paid API that can write into an
+ *   agent's context is a prompt-injection surface (AE7); the `reason` token is
+ *   matched against this closed set and everything else is discarded.
+ */
+export function merchantRefusalError(refusal: MerchantRefusal): McpToolError {
+  const { cardId } = refusal
+  const details = { cardId, merchantReason: refusal.reason ?? 'none' }
+
+  switch (refusal.reason) {
+    case 'merchant_scope_mismatch':
+      return merchantOutOfScopeError(refusal.merchant ?? 'the merchant', 'charge')
+
+    // The merchant already settled this card, or the vault says it is spent.
+    // Either way the money is gone and the card is terminal (AE3).
+    case 'card_already_settled':
+    case 'card_already_used':
+      return cardAlreadyUsedError(cardId)
+
+    case 'card_not_active':
+      return new McpToolError(
+        'CARD_NOT_ACTIVE',
+        `The merchant could not charge card ${cardId}: it is cancelled, reaped ` +
+          'or was never minted. Nothing was paid. Mint a new card.',
+        { details },
+      )
+
+    case 'card_expired':
+      return new McpToolError(
+        'CARD_EXPIRED',
+        `The merchant could not charge card ${cardId}: it expired before it was ` +
+          'presented. Nothing was paid and its escrow is released; mint a new card.',
+        { details },
+      )
+
+    case 'card_cap_too_low':
+      return new McpToolError(
+        'INVALID_REQUEST',
+        `Card ${cardId} has a cap below this merchant's price, so it cannot pay ` +
+          'for the resource. Nothing was paid. Mint a card with a larger cap.',
+        { details },
+      )
+
+    // The presentation itself was wrong: wrong vault, wrong chain, wrong scheme,
+    // wrong shape. None of it is retryable and none of it charged anything.
+    case 'vault_mismatch':
+    case 'unsupported_network':
+    case 'unsupported_scheme':
+    case 'malformed_payment_header':
+    case 'payment_required':
+      return new McpToolError(
+        'INVALID_REQUEST',
+        `The merchant rejected the payment header for card ${cardId} as one it ` +
+          'cannot settle (wrong vault, chain, or scheme). Nothing was paid. This ' +
+          'is a configuration mismatch between this MCP server and the merchant, ' +
+          'not something to retry.',
+        { details },
+      )
+
+    // The merchant's own settlement failed: its key, its RPC, its problem.
+    case 'settlement_failed':
+    case 'chain_unavailable':
+      return new McpToolError(
+        'RPC_UNAVAILABLE',
+        `The merchant could not settle card ${cardId} onchain — its own key or ` +
+          'RPC failed. Nothing was paid and the card is still spendable. Retry ' +
+          'in a few seconds.',
+        { retryable: true, details },
+      )
+
+    // The merchant settled but cannot prove it moved the right money. The card
+    // may well be spent, so a retry is not obviously safe and is not suggested.
+    case 'no_charge_event':
+    case 'wrong_vault':
+    case 'wrong_merchant':
+    case 'card_id_mismatch':
+    case 'amount_below_price':
+      return new McpToolError(
+        'RPC_UNAVAILABLE',
+        `The merchant submitted a settlement for card ${cardId} but could not ` +
+          'verify it moved the expected funds. Do not present another card — ' +
+          `check card ${cardId} with \`get_card_status\` first.`,
+        { details },
+      )
+
+    default:
+      // An unrecognised reason is not a code we can honour. A 5xx is the
+      // merchant's problem and worth retrying; anything else is not.
+      return refusal.status >= 500
+        ? new McpToolError(
+            'RPC_UNAVAILABLE',
+            `The merchant failed while settling card ${cardId} (HTTP ` +
+              `${refusal.status}). Nothing is known to have been paid; retry once.`,
+            { retryable: true, details },
+          )
+        : new McpToolError(
+            'INVALID_REQUEST',
+            `The merchant refused card ${cardId} with HTTP ${refusal.status} and ` +
+              'a reason this client does not recognise. Do not retry blindly — ' +
+              `check card ${cardId} with \`get_card_status\`.`,
+            { details },
+          )
+  }
 }
 
 /** The safe generic. Carries no cause text, ever. */
@@ -270,6 +417,10 @@ export function mapVaultRevert(
     case 'MerchantNotAllowed':
       return merchantOutOfScopeError(asAddress(argAt(revert, 2)), 'mint')
 
+    // Kept, but no longer on the payment path: this package never submits
+    // `charge` (KTD-9 — the merchant does), so a client hits this only by
+    // simulating or reading against a vault. The live source of AE7 on a
+    // payment is {@link merchantRefusalError}.
     case 'MerchantScopeMismatch':
       return merchantOutOfScopeError(asAddress(argAt(revert, 2)), 'charge')
 

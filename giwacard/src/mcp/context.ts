@@ -63,10 +63,48 @@ export interface VaultWalletClient {
   }): Promise<Hex>
 }
 
-/** Where the merchant-facing payment header is sent. See KTD-9. */
+/** The merchant response fields the payment path reads. Nothing more. */
+export interface FacilitatorResponse {
+  /** Whether the status is 2xx. */
+  ok: boolean
+  status: number
+  headers: { get(name: string): string | null }
+  json(): Promise<unknown>
+}
+
+/**
+ * The one HTTP call this package makes, as the narrowest shape that supports it.
+ *
+ * Declared structurally for the same reason the chain clients above are: the
+ * global `fetch` satisfies it by assignment, and a test satisfies it with a
+ * three-line function instead of a server. It is also a ceiling — a payment
+ * path holding this cannot stream, abort, or send a body.
+ */
+export type FacilitatorFetch = (
+  url: string,
+  init: { headers: Record<string, string> },
+) => Promise<FacilitatorResponse>
+
+/**
+ * How this server talks to a merchant's x402 facilitator. See KTD-9.
+ *
+ * Note what is *not* here: anything to sign or submit with. Under merchant-pull
+ * the client's whole side of a payment is an HTTP header naming a card, so this
+ * config is network identifiers and a `fetch`.
+ */
 export interface FacilitatorConfig {
-  /** Chain identifier echoed in the payment payload. */
+  /** Network slug echoed in the payment payload, e.g. `giwa-sepolia`. */
   network: string
+  /**
+   * Chain id the card must be settled on. Sent in `X-PAYMENT` so a merchant
+   * configured for another chain refuses instead of charging through it.
+   */
+  chainId?: number | undefined
+  /**
+   * HTTP client used to present a card. Injected so the test suite never opens
+   * a socket; defaults to the global `fetch`.
+   */
+  fetch?: FacilitatorFetch | undefined
 }
 
 export interface GiwaCardMcpContext {

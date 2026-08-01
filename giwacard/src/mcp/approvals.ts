@@ -134,8 +134,13 @@ interface DaemonErrorWire {
  * Preserving the daemon's own code across the HTTP boundary is what lets
  * `toMcpError` keep one mapping table instead of two: a rate limit hit
  * in-process and a rate limit hit over HTTP arrive at the agent identically.
+ *
+ * Exported because the CLI's owner-side client (`src/cli/daemon.ts`) speaks to
+ * the same daemon and must map its errors the same way — two mapping tables for
+ * one wire format is how "approved" and "already resolved" start meaning
+ * different things in the two surfaces.
  */
-async function toDaemonError(response: Response): Promise<DaemonError> {
+export async function daemonErrorFromResponse(response: Response): Promise<DaemonError> {
   let body: DaemonErrorWire = {}
   try {
     body = (await response.json()) as DaemonErrorWire
@@ -237,7 +242,7 @@ export class HttpApprovalClient implements ApprovalClient {
       return this.#requestWithStatus<T>(path, init, false)
     }
 
-    if (!response.ok) throw await toDaemonError(response)
+    if (!response.ok) throw await daemonErrorFromResponse(response)
 
     return { body: (await response.json()) as T, status: response.status }
   }

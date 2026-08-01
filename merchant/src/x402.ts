@@ -10,22 +10,34 @@
  * And since `CardVault.charge` already moves funds from vault escrow to the
  * merchant in one transaction, a Permit2 hop would be redundant even if it
  * worked. So the scheme is ours — but the *shape* is deliberately x402's, so
- * that anyone who knows x402 can read it:
+ * that anyone who knows x402 can read it.
+ *
+ * ## Who submits the charge: the merchant (KTD-9)
+ *
+ * `CardVault.charge` requires `msg.sender == card.merchantScope` and transfers
+ * the funds to `msg.sender`. The direction is therefore fixed by the contract:
+ * **the merchant pulls**, exactly like a real card, where the holder presents the
+ * card and the merchant is the one who runs it. A client that submitted `charge`
+ * itself would revert with `MerchantScopeMismatch` and pay nobody.
  *
  * 1. `GET /insights` with no payment → **402** whose body is the familiar
  *    `{ x402Version, error, accepts: [PaymentRequirements] }`.
- * 2. The client submits `CardVault.charge(cardId, amount)` from its session EOA.
- *    (That is the GiwaCard MCP server's job; the merchant never submits it.)
- * 3. The client retries with the **`X-PAYMENT`** request header carrying the
- *    transaction hash and the cardId.
- * 4. The merchant's built-in facilitator reads the chain and verifies a
- *    `CardCharged` event in that transaction. See `verify.ts`.
- * 5. On success the 200 carries a **`PAYMENT-RESPONSE`** header with the
- *    settlement receipt.
+ * 2. The client retries with the **`X-PAYMENT`** request header naming the
+ *    **`cardId`** it is presenting (plus the vault and chain id it expects, so a
+ *    misconfigured merchant fails loudly instead of charging through the wrong
+ *    contract). No transaction has happened yet, and the client never spends gas.
+ * 3. The merchant's built-in facilitator submits `CardVault.charge(cardId, price)`
+ *    from its own funded key and waits for the receipt.
+ * 4. It then verifies the `CardCharged` event on **its own** transaction. See
+ *    `verify.ts` — the checks are the same ones a read-only facilitator would
+ *    run, and they are still worth running: they are what turns "the RPC did not
+ *    throw" into "the vault I trust moved the amount I asked for".
+ * 5. On success the 200 carries a **`PAYMENT-RESPONSE`** header whose
+ *    `transaction` is the settlement tx hash — the client's receipt.
  *
  * The one field x402 does not have is `extra.vault`: without it the client would
- * not know which contract to call, and the facilitator's whole security model is
- * "events from *that* address and no other".
+ * not know which vault its card must live in, and the facilitator's whole
+ * security model is "events from *that* address and no other".
  */
 
 import { isAddress, isHex, type Address, type Hash } from 'viem'
@@ -36,29 +48,34 @@ export const X402_VERSION = 1 as const
 /** Scheme identifier. Not `exact_evm`: see the module docblock. */
 export const GIWA_VAULT_CHARGE_SCHEME = 'giwa-vault-charge' as const
 
-/** Request header carrying the payment receipt. Same name as x402. */
+/** Request header carrying the card being presented. Same name as x402. */
 export const PAYMENT_HEADER = 'X-PAYMENT' as const
 
 /** Response header carrying the settlement receipt. Same name as x402. */
 export const PAYMENT_RESPONSE_HEADER = 'PAYMENT-RESPONSE' as const
 
-/** The `charge` entrypoint clients must call, as a human-readable signature. */
+/** The `charge` entrypoint the merchant submits, as a human-readable signature. */
 export const SETTLEMENT_CALL = 'CardVault.charge(uint256 cardId, uint256 amount)' as const
 
-/** The event the facilitator verifies, as a human-readable signature. */
+/** The event the facilitator verifies on its own receipt. */
 export const SETTLEMENT_EVENT =
   'CardCharged(uint256 indexed cardId, address indexed vaultOwner, address indexed merchant, uint256 amount, uint256 released)' as const
+
+/** Who submits {@link SETTLEMENT_CALL}. Stated on the wire so nobody guesses. */
+export const SETTLEMENT_SUBMITTER = 'merchant' as const
 
 /**
  * KTD-5 release policy, stated on the wire so a client cannot claim surprise.
  *
- * The product is released as soon as the charge transaction is included in a
- * **sequencer block**. We do NOT wait for the safe block. On an OP Stack testnet
- * a sequencer block can in principle be reorged, so a merchant that released
- * against one could in principle be paid with a transaction that later vanishes.
- * We accept that consciously: waiting for the safe block takes minutes, which
- * would destroy the point of an agent paying for an API call. A production
- * merchant selling something irreversible should wait for `safe`.
+ * The product is released as soon as the merchant's own charge transaction is
+ * included in a **sequencer block**. We do NOT wait for the safe block. On an OP
+ * Stack testnet a sequencer block can in principle be reorged, so a merchant that
+ * released against one could in principle have delivered against a transaction
+ * that later vanishes. We accept that consciously: waiting for the safe block
+ * takes minutes, which would destroy the point of an agent paying for an API call
+ * in-line. Note which way the risk points here — under merchant-pull the reorg
+ * would un-pay the *merchant*, not the buyer. A production merchant selling
+ * something irreversible should wait for `safe`.
  */
 export const RELEASE_POLICY = 'sequencer-block' as const
 
@@ -70,35 +87,51 @@ export const RELEASE_POLICY = 'sequencer-block' as const
  * Every way a payment can fail, as a stable machine-readable code.
  *
  * These are returned to the client in the 402 body's `reason` field so an agent
- * can branch without string-matching prose.
+ * can branch without string-matching prose. They fall into three groups:
+ * malformed requests, cards the vault refused, and merchant-side failures.
  */
 export type PaymentErrorCode =
+  /* -- the client's request ------------------------------------------------ */
   /** No `X-PAYMENT` header at all — the ordinary first request. */
   | 'payment_required'
   /** Header present but not decodable, or missing required fields. */
   | 'malformed_payment_header'
   /** Header names a scheme this merchant does not implement. */
   | 'unsupported_scheme'
-  /** Header names a different network. */
+  /** Header names a different network, or a different chain id. */
   | 'unsupported_network'
-  /** The chain has no receipt for that hash (yet). */
-  | 'transaction_not_found'
-  /** The transaction exists but reverted, so nothing was paid. */
-  | 'transaction_reverted'
-  /** Receipt has no `CardCharged` event from any address. */
+  /** Header names a `CardVault` this merchant does not settle through. */
+  | 'vault_mismatch'
+  /** This cardId already bought a report from this merchant. */
+  | 'card_already_settled'
+
+  /* -- the vault refused the charge ---------------------------------------- */
+  /** The card was already charged — `CardNotActive` with status `Used` (AE3). */
+  | 'card_already_used'
+  /** The card is cancelled, reaped, or was never minted. */
+  | 'card_not_active'
+  /** The card outlived its expiry and can no longer be charged. */
+  | 'card_expired'
+  /** The card's cap is below the list price, so the charge cannot be made. */
+  | 'card_cap_too_low'
+  /** The card is scoped to a different merchant, so this one cannot charge it. */
+  | 'merchant_scope_mismatch'
+
+  /* -- merchant-side ------------------------------------------------------- */
+  /** The merchant could not submit the charge: unfunded key, RPC down, timeout. */
+  | 'settlement_failed'
+  /** The facilitator could not read the chain. Not the client's fault. */
+  | 'chain_unavailable'
+  /** The merchant's own successful transaction carried no `CardCharged` event. */
   | 'no_charge_event'
   /** A `CardCharged` event exists, but from a contract that is not our vault. */
   | 'wrong_vault'
   /** A `CardCharged` event exists from our vault, but pays someone else. */
   | 'wrong_merchant'
-  /** Paid to us, but the cardId does not match the one in the header. */
+  /** The event's cardId is not the card the merchant charged. */
   | 'card_id_mismatch'
-  /** Paid to us for the right card, but for less than the list price. */
+  /** The event moved less than the list price. */
   | 'amount_below_price'
-  /** This transaction hash already bought a report. */
-  | 'receipt_already_used'
-  /** The facilitator could not read the chain. Not the client's fault. */
-  | 'chain_unavailable'
 
 /** A payment that cannot be honoured, with a code the client can branch on. */
 export class PaymentError extends Error {
@@ -113,14 +146,30 @@ export class PaymentError extends Error {
 }
 
 /**
+ * Codes that are the *merchant's* problem, not the buyer's.
+ *
+ * Under merchant-pull the last five are all "our own transaction did not do what
+ * we asked it to". Answering 402 there would tell an agent to present another
+ * card for a charge that may already have moved money, so they are 503.
+ */
+const MERCHANT_SIDE_CODES: ReadonlySet<PaymentErrorCode> = new Set([
+  'settlement_failed',
+  'chain_unavailable',
+  'no_charge_event',
+  'wrong_vault',
+  'wrong_merchant',
+  'card_id_mismatch',
+  'amount_below_price',
+])
+
+/**
  * HTTP status for a payment failure.
  *
- * Everything the client could fix by paying properly is a 402. `chain_unavailable`
- * is ours, not theirs, so it is a 503 — answering 402 there would tell an agent
- * to pay a second time for a report it already paid for.
+ * Everything the client could fix — by presenting a different card, or by
+ * presenting it correctly — is a 402. Everything else is a 503.
  */
 export function httpStatusForPaymentError(code: PaymentErrorCode): 402 | 503 {
-  return code === 'chain_unavailable' ? 503 : 402
+  return MERCHANT_SIDE_CODES.has(code) ? 503 : 402
 }
 
 /* -------------------------------------------------------------------------- */
@@ -132,9 +181,9 @@ export function httpStatusForPaymentError(code: PaymentErrorCode): 402 | 503 {
  * makes a vault charge possible at all.
  */
 export interface GiwaVaultChargeExtra {
-  /** `CardVault` proxy the client must call, and the only trusted emitter. */
+  /** `CardVault` proxy the merchant charges through, and the only trusted emitter. */
   readonly vault: Address
-  /** Chain id the charge must land on. */
+  /** Chain id the charge will land on. */
   readonly chainId: number
   /** Token symbol, for display. */
   readonly tokenSymbol: string
@@ -142,12 +191,18 @@ export interface GiwaVaultChargeExtra {
   readonly tokenDecimals: number
   /** Human-readable price, e.g. `'1'`. */
   readonly priceDisplay: string
-  /** The call the client must submit. */
+  /** The call that settles the payment. */
   readonly settlementCall: typeof SETTLEMENT_CALL
-  /** The event the facilitator verifies. */
+  /** Who submits it. Always the merchant — see the module docblock. */
+  readonly settledBy: typeof SETTLEMENT_SUBMITTER
+  /** The event the facilitator verifies on its own receipt. */
   readonly settlementEvent: typeof SETTLEMENT_EVENT
-  /** Fields the client must put in the `X-PAYMENT` payload. */
-  readonly payloadFields: readonly ['transactionHash', 'cardId']
+  /**
+   * Fields the client may put in the `X-PAYMENT` payload. Only `cardId` is
+   * required; `vault` and `chainId`, when present, are cross-checked against
+   * this merchant's configuration and a mismatch is refused rather than settled.
+   */
+  readonly payloadFields: readonly ['cardId', 'vault', 'chainId']
   /** KTD-5: released at sequencer inclusion, not at the safe block. */
   readonly releasePolicy: typeof RELEASE_POLICY
   /** One-line statement of the reorg risk that policy accepts. */
@@ -168,9 +223,9 @@ export interface PaymentRequirements {
   readonly description: string
   /** Content type the paid resource returns. */
   readonly mimeType: string
-  /** Address that must appear as `merchant` in `CardCharged`. */
+  /** Address that will charge the card, and appear as `merchant` in `CardCharged`. */
   readonly payTo: Address
-  /** How long the client may take to present a receipt. */
+  /** How long the client may take to present a card. */
   readonly maxTimeoutSeconds: number
   /** Token contract — gUSD. */
   readonly asset: Address
@@ -217,10 +272,12 @@ export interface PaidResourceSpec {
 /**
  * Build the `accepts[]` entry for one paid resource.
  *
- * Carries everything a client needs to pay without a second round trip: who to
- * pay (`payTo`), how much (`maxAmountRequired`, base units), in what
+ * Carries everything a client needs to pay without a second round trip: who will
+ * charge it (`payTo`), how much (`maxAmountRequired`, base units), in what
  * (`asset` + `extra.tokenDecimals`), through which contract (`extra.vault`), on
- * which chain (`extra.chainId`), by calling what (`extra.settlementCall`).
+ * which chain (`extra.chainId`), by which call (`extra.settlementCall`) — and,
+ * because it is the thing this codebase once got wrong, who submits that call
+ * (`extra.settledBy`).
  */
 export function buildPaymentRequirements(
   config: RequirementsConfig,
@@ -243,11 +300,12 @@ export function buildPaymentRequirements(
       tokenDecimals: config.tokenDecimals,
       priceDisplay: config.priceDisplay,
       settlementCall: SETTLEMENT_CALL,
+      settledBy: SETTLEMENT_SUBMITTER,
       settlementEvent: SETTLEMENT_EVENT,
-      payloadFields: ['transactionHash', 'cardId'],
+      payloadFields: ['cardId', 'vault', 'chainId'],
       releasePolicy: RELEASE_POLICY,
       releasePolicyNote:
-        'The report is released once the charge is included in a sequencer block; ' +
+        'The report is released once the merchant charge is included in a sequencer block; ' +
         'the merchant does not wait for the safe block. Consciously accepted testnet reorg risk (KTD-5).',
     },
   }
@@ -270,16 +328,22 @@ export function buildPaymentRequiredBody(
 /* X-PAYMENT header                                                           */
 /* -------------------------------------------------------------------------- */
 
-/** Decoded `X-PAYMENT` header. */
+/** Decoded `X-PAYMENT` header: the card a client presents. */
 export interface PaymentPayload {
   readonly x402Version: number
   readonly scheme: typeof GIWA_VAULT_CHARGE_SCHEME
   readonly network: string
   readonly payload: {
-    /** Hash of the `CardVault.charge` transaction the client submitted. */
-    readonly transactionHash: Hash
-    /** Card the client charged. Must match the event's `cardId`. */
+    /** Card the merchant is authorised to charge. */
     readonly cardId: bigint
+    /**
+     * `CardVault` the client believes its card lives in. Optional; when present
+     * it must be this merchant's vault. It protects the *client*: without it a
+     * misconfigured merchant would silently charge through some other contract.
+     */
+    readonly vault?: Address
+    /** Chain id the client expects. Optional, cross-checked when present. */
+    readonly chainId?: number
   }
 }
 
@@ -289,8 +353,9 @@ interface PaymentPayloadWire {
   scheme: string
   network: string
   payload: {
-    transactionHash: string
     cardId: string
+    vault?: Address
+    chainId?: number
   }
 }
 
@@ -305,8 +370,11 @@ export function encodePaymentHeader(payment: PaymentPayload): string {
     scheme: payment.scheme,
     network: payment.network,
     payload: {
-      transactionHash: payment.payload.transactionHash,
       cardId: payment.payload.cardId.toString(),
+      ...(payment.payload.vault !== undefined ? { vault: payment.payload.vault } : {}),
+      ...(payment.payload.chainId !== undefined
+        ? { chainId: payment.payload.chainId }
+        : {}),
     },
   }
   return Buffer.from(JSON.stringify(wire), 'utf8').toString('base64')
@@ -317,7 +385,8 @@ function malformed(detail: string): PaymentError {
     'malformed_payment_header',
     `Malformed ${PAYMENT_HEADER} header: ${detail}. Expected base64 (or raw) JSON ` +
       `{"x402Version":${X402_VERSION},"scheme":"${GIWA_VAULT_CHARGE_SCHEME}","network":"<network>",` +
-      `"payload":{"transactionHash":"0x…64 hex","cardId":"<decimal>"}}.`,
+      `"payload":{"cardId":"<decimal>","vault":"0x…","chainId":<number>}}. ` +
+      'Only cardId is required; the merchant submits CardVault.charge itself.',
   )
 }
 
@@ -370,20 +439,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** A 32-byte transaction hash, lowercase or mixed case. */
-function parseTransactionHash(value: unknown): Hash {
-  if (typeof value !== 'string') {
-    throw malformed('payload.transactionHash must be a string')
-  }
-  if (!isHex(value) || value.length !== 66) {
-    throw malformed(
-      `payload.transactionHash must be a 32-byte hex string (0x + 64 hex chars), got ${JSON.stringify(value)}`,
-    )
-  }
-  // Hashes are compared as keys in the replay store, so normalise the case once.
-  return value.toLowerCase() as Hash
-}
-
 /** Card ids start at 1 in `CardVault`, so 0 is never a real card. */
 function parseCardId(value: unknown): bigint {
   if (typeof value === 'number') {
@@ -407,6 +462,25 @@ function parseCardId(value: unknown): bigint {
   return parsed
 }
 
+/** An optional 20-byte address field. Absent is fine; malformed is not. */
+function parseOptionalAddress(field: string, value: unknown): Address | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value !== 'string' || !isAddress(value, { strict: false })) {
+    throw malformed(`payload.${field} must be a 20-byte hex address when present`)
+  }
+  return value as Address
+}
+
+/** An optional positive-integer field. */
+function parseOptionalInt(field: string, value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined
+  const parsed = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value
+  if (typeof parsed !== 'number' || !Number.isInteger(parsed) || parsed <= 0) {
+    throw malformed(`payload.${field} must be a positive integer when present`)
+  }
+  return parsed
+}
+
 /** Options for {@link decodePaymentHeader}. */
 export interface DecodePaymentHeaderOptions {
   /** Network slug the merchant settles on. Mismatches are rejected. */
@@ -420,6 +494,10 @@ export interface DecodePaymentHeaderOptions {
  * `x402Version`, `scheme` and `network` default to this merchant's — a client
  * that says nothing is assumed to mean ours; a client that says something else
  * is rejected rather than silently reinterpreted.
+ *
+ * Note what this function does *not* do: it does not check `payload.vault` or
+ * `payload.chainId` against the merchant's configuration, because it is not told
+ * them. {@link assertExpectedVenue} does that.
  *
  * @throws {PaymentError} with `malformed_payment_header`, `unsupported_scheme`
  * or `unsupported_network`.
@@ -466,14 +544,55 @@ export function decodePaymentHeader(
     throw malformed('payload is missing or is not an object')
   }
 
+  const vault = parseOptionalAddress('vault', payload['vault'])
+  const chainId = parseOptionalInt('chainId', payload['chainId'])
+
   return {
     x402Version: X402_VERSION,
     scheme: GIWA_VAULT_CHARGE_SCHEME,
     network: options.network,
     payload: {
-      transactionHash: parseTransactionHash(payload['transactionHash']),
       cardId: parseCardId(payload['cardId']),
+      ...(vault !== undefined ? { vault } : {}),
+      ...(chainId !== undefined ? { chainId } : {}),
     },
+  }
+}
+
+/** What {@link assertExpectedVenue} compares the client's expectations against. */
+export interface SettlementVenue {
+  readonly vault: Address
+  readonly chainId: number
+}
+
+/**
+ * Refuse a payment whose client expects a different vault or chain than ours.
+ *
+ * Cheap, and it fails before any gas is spent. A client that omits both fields
+ * is trusting the requirements it already read, which is its prerogative.
+ *
+ * @throws {PaymentError} `vault_mismatch` or `unsupported_network`.
+ */
+export function assertExpectedVenue(
+  payload: PaymentPayload['payload'],
+  venue: SettlementVenue,
+): void {
+  if (
+    payload.vault !== undefined &&
+    payload.vault.toLowerCase() !== venue.vault.toLowerCase()
+  ) {
+    throw new PaymentError(
+      'vault_mismatch',
+      `This merchant settles through CardVault ${venue.vault}, but the ${PAYMENT_HEADER} ` +
+        `header expects ${payload.vault}. Present a card from the advertised vault.`,
+    )
+  }
+  if (payload.chainId !== undefined && payload.chainId !== venue.chainId) {
+    throw new PaymentError(
+      'unsupported_network',
+      `This merchant settles on chain ${venue.chainId}, but the ${PAYMENT_HEADER} header ` +
+        `expects chain ${payload.chainId}.`,
+    )
   }
 }
 
@@ -487,11 +606,11 @@ export interface SettlementResponse {
   readonly x402Version: typeof X402_VERSION
   readonly scheme: typeof GIWA_VAULT_CHARGE_SCHEME
   readonly network: string
-  /** Hash of the verified `CardVault.charge` transaction. */
+  /** Hash of the merchant's own `CardVault.charge` transaction. The receipt. */
   readonly transaction: Hash
   /** Vault owner whose escrow funded the charge — the economic payer. */
   readonly payer: Address
-  /** Address paid. Always this merchant. */
+  /** Address paid, and the address that submitted the charge. Always this merchant. */
   readonly payee: Address
   /** Vault that emitted the verified event. */
   readonly vault: Address
@@ -536,7 +655,13 @@ export function decodeSettlementHeader(raw: string): SettlementResponse {
   }
   const transaction = parsed['transaction']
   const payee = parsed['payee']
-  if (typeof transaction !== 'string' || typeof payee !== 'string' || !isAddress(payee)) {
+  if (
+    typeof transaction !== 'string' ||
+    !isHex(transaction) ||
+    transaction.length !== 66 ||
+    typeof payee !== 'string' ||
+    !isAddress(payee)
+  ) {
     throw new PaymentError(
       'malformed_payment_header',
       `Malformed ${PAYMENT_RESPONSE_HEADER} header: missing transaction or payee.`,

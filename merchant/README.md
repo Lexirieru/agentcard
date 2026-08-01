@@ -1,9 +1,15 @@
 # GIWA Insights — the GiwaCard demo merchant
 
-A paid API that answers HTTP **402** with payment requirements, then serves its
-product once payment is verified onchain. It ships with its own x402
-facilitator, which is **read-only**: it verifies a `CardVault` event, it never
-submits a transaction and never holds a funded key.
+A paid API that answers HTTP **402** with payment requirements, then charges the
+card it is presented and serves its product. It ships with its own x402
+facilitator, which **settles**: it submits `CardVault.charge` from the merchant's
+own key and then verifies the `CardCharged` event on that transaction.
+
+That direction is not a choice. `CardVault.charge` requires
+`msg.sender == card.merchantScope` and pays `msg.sender`, so the merchant is the
+party that runs the card — exactly like a real one, where the holder presents the
+card and the merchant charges it. **The merchant therefore needs a funded EOA**;
+see [Funding the merchant key](#funding-the-merchant-key).
 
 This is the merchant side of the GiwaCard demo loop. It is operator-run, not
 published to npm.
@@ -60,6 +66,17 @@ worked.
 So the scheme is ours, but the *shape* is deliberately x402's, so that anyone who
 knows x402 can read it.
 
+### Who submits the charge
+
+The merchant. `CardVault.charge` is guarded by
+`msg.sender == card.merchantScope` and transfers to `msg.sender`, so a client
+that submitted it would revert with `MerchantScopeMismatch` and pay nobody. The
+requirements say so explicitly in `extra.settledBy`, because this is precisely
+the detail a client would otherwise have to guess.
+
+The client's entire side of a payment is one header naming a card. It signs
+nothing, submits nothing, and **spends no gas**.
+
 ```
    client (GiwaCard MCP server)                       merchant
    ────────────────────────────                       ────────
@@ -67,16 +84,21 @@ knows x402 can read it.
                                           ◀───────────  402 { x402Version, error,
                                                               reason, accepts: [ … ] }
 
-2. CardVault.charge(cardId, amount)  ──▶ GIWA Sepolia
-   (submitted by the session EOA;
-    the merchant never submits it)
+2. GET /insights                          ───────────▶
+   X-PAYMENT: base64({ payload: {                     3. CardVault.charge(cardId, price)
+     cardId, vault, chainId } })                          ──▶ GIWA Sepolia
+                                                          (from the merchant's own key)
 
-3. GET /insights                          ───────────▶
-   X-PAYMENT: base64({ payload: {                     4. facilitator reads the receipt,
-     transactionHash, cardId } })                        verifies the CardCharged event
+                                                     4. verify CardCharged on its OWN
+                                                        receipt: right vault, right
+                                                        merchant, right card, right amount
                                           ◀───────────  200 + report
-                                                        PAYMENT-RESPONSE: base64({ … })
+                                                        PAYMENT-RESPONSE: base64({
+                                                          transaction: 0x…, … })
 ```
+
+The settlement transaction hash travels **back**, in `PAYMENT-RESPONSE`. It is
+the buyer's receipt.
 
 Header names stay in the x402 family: `PAYMENT-REQUIRED`-style requirements in
 the 402 body, `X-PAYMENT` on the request, `PAYMENT-RESPONSE` on the response.
@@ -95,18 +117,19 @@ the 402 body, `X-PAYMENT` on the request, `PAYMENT-RESPONSE` on the response.
     "resource": "https://…/insights",
     "description": "GIWA Insights — …",
     "mimeType": "application/json",
-    "payTo": "0x…",                      // must appear as `merchant` in CardCharged
+    "payTo": "0x…",                      // charges the card; appears as `merchant` in CardCharged
     "maxTimeoutSeconds": 120,
     "asset": "0x…",                      // gUSD
     "extra": {
-      "vault": "0x…",                    // the CardVault to call, and the ONLY trusted emitter
+      "vault": "0x…",                    // the CardVault charged through, and the ONLY trusted emitter
       "chainId": 91342,
       "tokenSymbol": "gUSD",
       "tokenDecimals": 6,
       "priceDisplay": "1",
       "settlementCall": "CardVault.charge(uint256 cardId, uint256 amount)",
+      "settledBy": "merchant",           // NOT the client — the contract allows no other answer
       "settlementEvent": "CardCharged(uint256 indexed cardId, address indexed vaultOwner, address indexed merchant, uint256 amount, uint256 released)",
-      "payloadFields": ["transactionHash", "cardId"],
+      "payloadFields": ["cardId", "vault", "chainId"],
       "releasePolicy": "sequencer-block",
       "releasePolicyNote": "…"
     }
@@ -115,9 +138,9 @@ the 402 body, `X-PAYMENT` on the request, `PAYMENT-RESPONSE` on the response.
 ```
 
 `extra.vault` is the one field stock x402 has no place for, and it is
-load-bearing twice over: without it the client would not know which contract to
-call, and the facilitator's entire security model is "events from *that* address
-and no other".
+load-bearing twice over: it tells the client which vault its card must live in,
+and the facilitator's entire security model is "events from *that* address and no
+other".
 
 ### The `X-PAYMENT` header
 
@@ -128,13 +151,22 @@ Base64 (standard or url-safe, padded or not) of:
   "x402Version": 1,
   "scheme": "giwa-vault-charge",
   "network": "giwa-sepolia",
-  "payload": { "transactionHash": "0x…64 hex", "cardId": "1" }
+  "payload": { "cardId": "1", "vault": "0x…", "chainId": 91342 }
 }
 ```
+
+Only `cardId` is required. `vault` and `chainId` are the client's own safety
+check — state them and a merchant configured for a different vault or chain
+refuses (`vault_mismatch` / `unsupported_network`) instead of charging through
+something you did not mean. Omitting them means trusting the requirements you
+already read, which is a legitimate choice.
 
 `x402Version`, `scheme` and `network` may be omitted (they default to this
 merchant's); if present and different, the request is rejected rather than
 silently reinterpreted. Raw JSON is also accepted, as a `curl` convenience.
+
+There is deliberately no `transactionHash` field. The client has not made a
+transaction — that is the merchant's job.
 
 ### The `PAYMENT-RESPONSE` header
 
@@ -142,62 +174,91 @@ Base64 of the settlement receipt: `{ success, transaction, payer (the vault
 owner), payee, vault, cardId, amount, released, asset, blockNumber, blockHash,
 logIndex, releasePolicy, settledAt }`.
 
+`transaction` is the merchant's own `CardVault.charge` transaction, and it is
+what the buyer keeps as proof.
+
 ---
 
 ## What the facilitator checks
 
-A receipt is accepted only when **all** of the following hold:
+On a paid request the facilitator submits `CardVault.charge(cardId, price)` from
+the merchant's key, then verifies its **own** receipt. A settlement is accepted
+only when **all** of the following hold:
 
-1. the transaction exists and succeeded;
+1. our charge transaction succeeded;
 2. it contains a `CardCharged` log emitted **by the configured vault address**;
 3. that event's `merchant` is this merchant;
-4. its `cardId` matches the one the client claimed in `X-PAYMENT`;
+4. its `cardId` is the card we were presented and charged;
 5. its `amount` is at least the list price;
-6. the transaction hash has not already bought a report.
+6. the cardId has not already bought a report.
 
-Check 2 is the impersonation guard, and it is the reason the address filter runs
-*before* any decoded field is believed. Anyone can deploy a lookalike contract
-that emits a byte-identical `CardCharged` with a perfect merchant, cardId and
-amount — the topics prove nothing about *who* emitted them. Only the log's
-`address` does.
+That list is unchanged from when this facilitator was read-only and checked a
+hash a stranger handed it — because the checks were never about trusting the
+*client*. "The RPC did not throw" is not the same claim as "the vault I trust
+moved the amount I asked for". Check 2 is the impersonation guard, and it is the
+reason the address filter runs *before* any decoded field is believed: anyone can
+deploy a lookalike contract emitting a byte-identical `CardCharged`, and the
+topics prove nothing about *who* emitted them. Under merchant-pull it catches a
+misconfigured `CARD_VAULT_ADDRESS` rather than a hostile client, which is a
+smaller threat but a much more likely bug.
 
-Check 6 is the replay guard. It is held in memory (`InMemoryReceiptStore`) with
-bounded FIFO eviction, and the hash is claimed *synchronously* before the first
-`await`, so two concurrent requests carrying the same receipt cannot both be
-served. One honest caveat: a process restart, or eviction past `maxEntries`,
-re-opens replay for old hashes. A production merchant would persist this store.
-Note that `CardVault` independently flips a charged card to `Used`, so a replayed
-receipt can never move money a second time — only serve a second copy of a
-report.
+Because the checks now run against a transaction we submitted, a failure in
+2–5 is a *merchant-side* anomaly and answers **503**, not 402. Telling a buyer to
+present another card because our own settlement did something inexplicable would
+be, at best, expensive advice.
 
-Verification failures release the claim, so a client whose request lost to a
-transient RPC error can retry with the same honest receipt. So does a *report*
-generation failure after a verified payment: the buyer paid, so they get a 503
-with `receiptReleased: true` and can retry with the same header rather than
-burning a second card.
+Check 6 is the replay guard, now keyed on **cardId**. It is held in memory
+(`InMemorySettlementStore`) with bounded FIFO eviction, and the cardId is claimed
+*synchronously* before the first `await`, so two concurrent requests presenting
+the same card cannot both reach the chain. One honest caveat: a process restart,
+or eviction past `maxEntries`, forgets old cardIds. What that re-opens is smaller
+than it looks — `CardVault` independently flips a charged card to `Used`, so a
+forgotten card presented again makes the merchant submit a charge the vault
+reverts, and the buyer gets a 402. **A replay can at worst duplicate a report;
+it can never move money twice.** A production merchant would persist this store.
+
+A charge that never happened releases the claim, so a buyer whose request lost to
+a transient failure can present the same card again. A *report* generation
+failure after a successful charge does not release it — the card is `Used`
+onchain and the buyer cannot pay again even if we asked — so the settlement is
+recorded as an undelivered debt, and the same card id collects the report on a
+retry without a second charge. Collecting that debt is atomic, so a burst of
+retries ships one report rather than one per request.
 
 ### Error codes
 
-Returned as `reason` in the 402 body.
+Returned as `reason` in the 402/503 body.
+
+The buyer can act on all of these:
 
 | `reason` | Status | Meaning |
 | --- | --- | --- |
 | `payment_required` | 402 | No `X-PAYMENT` header — the ordinary first request. |
-| `malformed_payment_header` | 402 | Header present but not decodable, or missing fields. |
+| `malformed_payment_header` | 402 | Header present but not decodable, or missing `cardId`. |
 | `unsupported_scheme` | 402 | Header names a scheme this merchant does not implement. |
-| `unsupported_network` | 402 | Header names a different network. |
-| `transaction_not_found` | 402 | The chain has no receipt for that hash (yet). |
-| `transaction_reverted` | 402 | The transaction exists but reverted. |
-| `no_charge_event` | 402 | Receipt has no `CardCharged` event at all. |
-| `wrong_vault` | 402 | `CardCharged` present, but from a contract that is not our vault. |
-| `wrong_merchant` | 402 | Charged from our vault, but paid someone else. |
-| `card_id_mismatch` | 402 | Paid to us, but for a different card than claimed. |
-| `amount_below_price` | 402 | Paid to us for the right card, but under the list price. |
-| `receipt_already_used` | 402 | That transaction hash already bought a report. |
-| `chain_unavailable` | **503** | The facilitator could not read the chain. Not the client's fault. |
+| `unsupported_network` | 402 | Header names a different network or chain id. |
+| `vault_mismatch` | 402 | Header names a `CardVault` this merchant does not settle through. |
+| `card_already_settled` | 402 | That cardId already bought a report here. |
+| `card_already_used` | 402 | The vault says the card was already charged (AE3). |
+| `card_not_active` | 402 | The card is cancelled, reaped, or was never minted. |
+| `card_expired` | 402 | The card outlived its expiry. |
+| `card_cap_too_low` | 402 | The card's cap is below the list price. |
+| `merchant_scope_mismatch` | 402 | The card is scoped to a different merchant. |
 
-`chain_unavailable` is a 503 on purpose: answering 402 there would tell an agent
-to pay a second time for a report it has already paid for.
+These are ours, not theirs — and none of them tells an agent to pay again:
+
+| `reason` | Status | Meaning |
+| --- | --- | --- |
+| `settlement_failed` | **503** | We could not submit the charge: unfunded key, dead RPC, or a revert we cannot name. Nothing was charged. |
+| `chain_unavailable` | **503** | We submitted a charge and could not read its receipt. |
+| `no_charge_event` | **503** | Our own successful transaction carried no `CardCharged`. |
+| `wrong_vault` | **503** | The event came from a contract that is not our configured vault. |
+| `wrong_merchant` | **503** | Our own charge paid someone else. |
+| `card_id_mismatch` | **503** | Our own charge settled a different card. |
+| `amount_below_price` | **503** | Our own charge moved less than the list price. |
+
+The vault reverts in the first table cost nobody gas: viem estimates gas before
+signing, so a doomed `charge` is rejected by the node and never mined.
 
 ---
 
@@ -208,7 +269,8 @@ block. We do not wait for the safe block.**
 
 On an OP Stack testnet a sequencer block can in principle be reorged, so a report
 could be released against a charge that later disappears — the merchant would
-have delivered its product for nothing.
+have delivered its product for nothing. Note which way the risk points under
+merchant-pull: a reorg un-pays the *merchant*, never the buyer.
 
 That risk is accepted **consciously**. Waiting for the safe block takes minutes,
 which would destroy the point of an agent paying for an API call inline. A
@@ -225,12 +287,34 @@ client; it is not evidence that money moved.
 
 ---
 
-## The facilitator holds no key
+## Funding the merchant key
 
-`CardVault.charge` moves the funds, and the client submits it. By the time the
-merchant looks, the payment is already onchain — so the facilitator only ever
-*reads*. There is no wallet client, no private key, no mnemonic and no keystore
-anywhere in this service, and nothing for the process to sign with (KTD-6/KTD-9).
+The merchant submits `CardVault.charge`, so it signs, so it pays gas. This is the
+one operational cost the read-only design used to avoid, and it is small:
+
+- one `CardVault.charge` on GIWA Sepolia is a ~70k-gas L2 transaction at a
+  sub-gwei base fee — **on the order of 1e-5 ETH**;
+- a single daily faucet claim therefore covers **hundreds** of charges;
+- the merchant only spends gas on charges the vault will accept. viem estimates
+  gas before signing, so a card that is spent, expired, under-capped or scoped
+  elsewhere is rejected by the node and costs nothing.
+
+Set `MERCHANT_PRIVATE_KEY` to the key of `MERCHANT_ADDRESS` and keep that account
+topped up. Two things are checked at startup rather than at the first sale:
+
+- **the key is present.** A missing key exits with a message naming the variable.
+- **the key derives to `MERCHANT_ADDRESS`.** `CardVault.charge` demands
+  `msg.sender == card.merchantScope`, so a merchant holding the wrong key would
+  start cleanly and then fail every single settlement — the worst possible time
+  to discover a typo.
+
+The key is never logged, never returned by an endpoint, and never interpolated
+into a configuration error; validation messages quote the setting name and the
+length, never the value.
+
+For anything beyond a demo, this key should come from a secret manager or a
+hardware signer rather than an environment variable, and it should hold nothing
+but gas — the gUSD it collects can be swept elsewhere.
 
 ---
 
@@ -240,6 +324,7 @@ anywhere in this service, and nothing for the process to sign with (KTD-6/KTD-9)
 bun install
 
 MERCHANT_ADDRESS=0x…      \
+MERCHANT_PRIVATE_KEY=0x…  \
 CARD_VAULT_ADDRESS=0x…    \
 GUSD_ADDRESS=0x…          \
 bun run start             # or: bun run dev  (watch mode)
@@ -248,6 +333,7 @@ bun run start             # or: bun run dev  (watch mode)
 | Variable | Required | Default |
 | --- | --- | --- |
 | `MERCHANT_ADDRESS` | yes | — |
+| `MERCHANT_PRIVATE_KEY` | yes | — (must derive to `MERCHANT_ADDRESS`, and hold ETH) |
 | `CARD_VAULT_ADDRESS` | yes | — |
 | `GUSD_ADDRESS` | yes | — |
 | `MERCHANT_PRICE_GUSD` | no | `1` |
@@ -265,7 +351,7 @@ bun run start             # or: bun run dev  (watch mode)
 | Method | Path | Price |
 | --- | --- | --- |
 | `GET` | `/` | free — service description and how to pay |
-| `GET` | `/health` | free — liveness and replay-store size |
+| `GET` | `/health` | free — liveness and settled-card count |
 | `GET` | `/.well-known/x402` | free — discovery: the paid resource catalogue |
 | `GET` | `/insights` | **1 gUSD** — the report |
 
@@ -275,10 +361,15 @@ bun run start             # or: bun run dev  (watch mode)
 # 1. See the requirements.
 curl -s localhost:4021/insights | jq
 
-# 2. Charge a card (from the GiwaCard side), then redeem the receipt.
+# 2. Present a card. Mint it first from the GiwaCard side, scoped to
+#    MERCHANT_ADDRESS with a cap of at least the list price. You submit nothing:
+#    the merchant charges the card and returns the settlement hash.
 curl -s localhost:4021/insights \
-  -H "X-PAYMENT: $(printf '{"payload":{"transactionHash":"0x…","cardId":"1"}}' | base64)" \
+  -H "X-PAYMENT: $(printf '{"payload":{"cardId":"1"}}' | base64)" \
   -D - | jq
+
+# 3. Read the receipt out of the PAYMENT-RESPONSE header.
+#    …| grep -i '^payment-response:' | cut -d' ' -f2 | base64 -d | jq
 ```
 
 ---
@@ -287,7 +378,7 @@ curl -s localhost:4021/insights \
 
 | Script | What it does |
 | --- | --- |
-| `bun test` | Full suite. Chain reads are injected, so it never touches a live RPC. |
+| `bun test` | Full suite. Chain access is injected, so it never touches a live RPC or a real key. |
 | `bun run typecheck` | `tsc --noEmit`. |
 | `bun run build` | `tsdown` → `dist/` (ESM). |
 | `bun run start` | Serve on Bun. |
@@ -303,9 +394,9 @@ reads.
 | File | What lives there |
 | --- | --- |
 | `src/x402.ts` | Wire protocol: requirements, `X-PAYMENT`, `PAYMENT-RESPONSE`, error codes. |
-| `src/verify.ts` | The read-only facilitator: `CardCharged` ABI, verification, replay store. |
+| `src/verify.ts` | The facilitator: `charge` + `CardCharged` ABI, settlement, verification, replay store. |
 | `src/insights.ts` | The product: live-RPC report generation. |
-| `src/chain.ts` | GIWA Sepolia chain definition, retry/backoff, read-only client. |
+| `src/chain.ts` | GIWA Sepolia chain definition, retry/backoff, read and wallet clients. |
 | `src/config.ts` | Configuration and validation. |
 | `src/index.ts` | The Hono app and library surface. |
 | `src/server.ts` | Bun entrypoint. |

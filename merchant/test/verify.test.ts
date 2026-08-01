@@ -1,15 +1,25 @@
 import { describe, expect, test } from 'bun:test'
-import { getAddress, toEventSelector, type Hash } from 'viem'
+import {
+  encodeErrorResult,
+  getAddress,
+  toEventSelector,
+  toFunctionSelector,
+  type Hash,
+} from 'viem'
 
 import {
   CARD_CHARGED_SIGNATURE,
   CARD_CHARGED_TOPIC,
-  InMemoryReceiptStore,
+  InMemorySettlementStore,
   MerchantFacilitator,
   cardChargedAbi,
-  createViemReceiptReader,
-  verifyCardCharge,
+  cardVaultChargeAbi,
+  classifyChargeFailure,
+  createViemChargeSubmitter,
+  verifyChargeReceipt,
+  type ChargeProof,
   type ChargeReceipt,
+  type ChargeRequest,
 } from '../src/verify.js'
 import { PaymentError, type PaymentErrorCode } from '../src/x402.js'
 
@@ -18,7 +28,7 @@ import {
   MERCHANT_ADDRESS,
   ONE_GUSD,
   OTHER_MERCHANT,
-  StubReceiptReader,
+  StubChargeSubmitter,
   VAULT_ADDRESS,
   VAULT_OWNER,
   cardChargedLog,
@@ -28,28 +38,47 @@ import {
 } from './fixtures.js'
 
 const BASE_INPUT = {
-  transactionHash: txHash(1),
   cardId: 1n,
   vault: VAULT_ADDRESS,
   merchant: MERCHANT_ADDRESS,
   minAmount: ONE_GUSD,
 } as const
 
+const CHARGE_REQUEST: ChargeRequest = { cardId: 1n, amount: ONE_GUSD }
+
 /** Run a verification and assert it fails with a specific code. */
-async function expectRejection(
-  receipt: ChargeReceipt | null,
+function expectRejection(
+  receipt: ChargeReceipt,
   code: PaymentErrorCode,
   input: Partial<typeof BASE_INPUT> = {},
-): Promise<PaymentError> {
-  const reader = new StubReceiptReader(receipt === null ? [] : [receipt])
+): PaymentError {
   try {
-    await verifyCardCharge(reader, { ...BASE_INPUT, ...input })
+    verifyChargeReceipt(receipt, { ...BASE_INPUT, ...input })
   } catch (error) {
     expect(error).toBeInstanceOf(PaymentError)
     expect((error as PaymentError).code).toBe(code)
     return error as PaymentError
   }
   throw new Error(`expected verification to reject with ${code}, but it resolved`)
+}
+
+/**
+ * A viem-shaped revert.
+ *
+ * viem wraps a decoded custom error in a `ContractFunctionRevertedError` several
+ * `cause` levels down; the classifier walks that chain, so the fixture has to be
+ * nested the same way to prove anything.
+ */
+function revertError(errorName: string, args: readonly unknown[] = []): Error {
+  const inner = Object.assign(new Error(`reverted with ${errorName}`), {
+    name: 'ContractFunctionRevertedError',
+    data: { errorName, args },
+  })
+  const outer = Object.assign(new Error('execution reverted'), {
+    name: 'ContractFunctionExecutionError',
+    cause: inner,
+  })
+  return outer
 }
 
 describe('CardCharged event definition', () => {
@@ -73,10 +102,124 @@ describe('CardCharged event definition', () => {
   })
 })
 
-describe('verifyCardCharge — happy path', () => {
-  test('accepts a charge that pays this merchant for the claimed card', async () => {
-    const reader = new StubReceiptReader([chargeReceipt()])
-    const proof = await verifyCardCharge(reader, BASE_INPUT)
+describe('charge ABI', () => {
+  test('the entrypoint selector matches the contract signature', () => {
+    expect(toFunctionSelector('charge(uint256,uint256)')).toBe(
+      toFunctionSelector('function charge(uint256 cardId, uint256 amount)'),
+    )
+  })
+
+  test('every custom error selector matches its canonical signature', () => {
+    // An argument-type typo (`uint256 status` instead of `uint8`) would still
+    // compile and would still look right — and viem would silently fail to name
+    // the revert, so every refusal would surface as a merchant-side 503.
+    const canonical: Record<string, string> = {
+      CardNotActive: 'CardNotActive(uint256,uint8)',
+      CardExpired: 'CardExpired(uint256,uint64)',
+      MerchantScopeMismatch: 'MerchantScopeMismatch(uint256,address,address)',
+      ChargeExceedsCap: 'ChargeExceedsCap(uint256,uint256)',
+      ZeroAmount: 'ZeroAmount()',
+    }
+    const errors = cardVaultChargeAbi.filter((entry) => entry.type === 'error')
+    expect(errors).toHaveLength(Object.keys(canonical).length)
+
+    for (const entry of errors) {
+      const signature = canonical[entry.name]
+      expect(signature).toBeDefined()
+      const encoded = encodeErrorResult({
+        abi: cardVaultChargeAbi,
+        errorName: entry.name,
+        // Placeholder args of the right arity; only the selector is compared.
+        args: entry.inputs.map((input) =>
+          input.type === 'address' ? VAULT_ADDRESS : 0n,
+        ) as never,
+      })
+      expect(encoded.slice(0, 10)).toBe(toFunctionSelector(signature ?? ''))
+    }
+  })
+})
+
+describe('classifyChargeFailure — the vault refused', () => {
+  const cases: readonly [string, readonly unknown[], PaymentErrorCode][] = [
+    ['MerchantScopeMismatch', [1n, MERCHANT_ADDRESS, OTHER_MERCHANT], 'merchant_scope_mismatch'],
+    ['CardNotActive', [1n, 2], 'card_already_used'],
+    ['CardNotActive', [1n, 4], 'card_not_active'],
+    ['CardNotActive', [1n, 0], 'card_not_active'],
+    ['CardExpired', [1n, 1_800_000_000n], 'card_expired'],
+    ['ChargeExceedsCap', [ONE_GUSD, 500_000n], 'card_cap_too_low'],
+  ]
+
+  for (const [errorName, args, code] of cases) {
+    test(`${errorName}(${String(args[1])}) → ${code}`, () => {
+      const mapped = classifyChargeFailure(revertError(errorName, args), CHARGE_REQUEST)
+      expect(mapped).toBeInstanceOf(PaymentError)
+      expect(mapped.code).toBe(code)
+      expect(mapped.message).toContain('1')
+    })
+  }
+
+  test('every vault refusal is something the buyer can act on (402)', () => {
+    for (const [errorName, args] of cases) {
+      const mapped = classifyChargeFailure(revertError(errorName, args), CHARGE_REQUEST)
+      expect(mapped.code).not.toBe('settlement_failed')
+    }
+  })
+
+  test('a revert we have no advice for is a merchant-side failure, not a 402', () => {
+    // Better to say "we could not settle" than to tell a buyer to fix something
+    // we cannot name.
+    const mapped = classifyChargeFailure(revertError('SomeFutureError'), CHARGE_REQUEST)
+    expect(mapped.code).toBe('settlement_failed')
+  })
+})
+
+describe('classifyChargeFailure — the merchant failed', () => {
+  const unfunded = [
+    'insufficient funds for gas * price + value',
+    'insufficient funds for intrinsic transaction cost',
+    "sender doesn't have enough funds to send tx",
+    'gas required exceeds allowance (0)',
+  ]
+
+  for (const message of unfunded) {
+    test(`"${message.slice(0, 28)}…" is settlement_failed, and says so`, () => {
+      const mapped = classifyChargeFailure(new Error(message), CHARGE_REQUEST)
+      expect(mapped.code).toBe('settlement_failed')
+      expect(mapped.message).toContain('no ETH for gas')
+      expect(mapped.message).toContain('your card was not charged')
+    })
+  }
+
+  test('finds the reason down a cause chain', () => {
+    const nested = Object.assign(new Error('Transaction failed'), {
+      cause: Object.assign(new Error('rpc error'), {
+        details: 'insufficient funds for gas',
+      }),
+    })
+    expect(classifyChargeFailure(nested, CHARGE_REQUEST).code).toBe('settlement_failed')
+  })
+
+  test('an unrecognised failure is settlement_failed, never a 402', () => {
+    const mapped = classifyChargeFailure(new Error('fetch failed'), CHARGE_REQUEST)
+    expect(mapped.code).toBe('settlement_failed')
+  })
+
+  test('an already-classified PaymentError passes straight through', () => {
+    const original = new PaymentError('card_expired', 'nope')
+    expect(classifyChargeFailure(original, CHARGE_REQUEST)).toBe(original)
+  })
+
+  test('a cyclic cause chain terminates', () => {
+    const a: { cause?: unknown; message: string } = { message: 'a' }
+    const b = { message: 'b', cause: a }
+    a.cause = b
+    expect(classifyChargeFailure(a, CHARGE_REQUEST).code).toBe('settlement_failed')
+  })
+})
+
+describe('verifyChargeReceipt — happy path', () => {
+  test('accepts a settlement that paid this merchant for the charged card', () => {
+    const proof = verifyChargeReceipt(chargeReceipt(), BASE_INPUT)
 
     expect(proof.transactionHash).toBe(txHash(1))
     expect(proof.cardId).toBe(1n)
@@ -89,24 +232,25 @@ describe('verifyCardCharge — happy path', () => {
     expect(proof.logIndex).toBe(0)
   })
 
-  test('accepts an overpayment', async () => {
-    const reader = new StubReceiptReader([
+  test('accepts a charge above the price', () => {
+    const proof = verifyChargeReceipt(
       chargeReceipt({ logs: [cardChargedLog({ amount: ONE_GUSD * 5n })] }),
-    ])
-    const proof = await verifyCardCharge(reader, BASE_INPUT)
+      BASE_INPUT,
+    )
     expect(proof.amount).toBe(ONE_GUSD * 5n)
   })
 
-  test('accepts an exact payment (>= is inclusive)', async () => {
-    const reader = new StubReceiptReader([
-      chargeReceipt({ logs: [cardChargedLog({ amount: ONE_GUSD })] }),
-    ])
-    await expect(verifyCardCharge(reader, BASE_INPUT)).resolves.toBeDefined()
+  test('accepts an exact payment (>= is inclusive)', () => {
+    expect(
+      verifyChargeReceipt(
+        chargeReceipt({ logs: [cardChargedLog({ amount: ONE_GUSD })] }),
+        BASE_INPUT,
+      ).amount,
+    ).toBe(ONE_GUSD)
   })
 
-  test('compares addresses case-insensitively', async () => {
-    const reader = new StubReceiptReader([chargeReceipt()])
-    const proof = await verifyCardCharge(reader, {
+  test('compares addresses case-insensitively', () => {
+    const proof = verifyChargeReceipt(chargeReceipt(), {
       ...BASE_INPUT,
       vault: VAULT_ADDRESS.toLowerCase() as `0x${string}`,
       merchant: MERCHANT_ADDRESS.toLowerCase() as `0x${string}`,
@@ -114,8 +258,8 @@ describe('verifyCardCharge — happy path', () => {
     expect(proof.cardId).toBe(1n)
   })
 
-  test('picks the matching event out of a receipt with several charges', async () => {
-    const reader = new StubReceiptReader([
+  test('picks the matching event out of a receipt with several charges', () => {
+    const proof = verifyChargeReceipt(
       chargeReceipt({
         logs: [
           unrelatedLog(),
@@ -123,37 +267,33 @@ describe('verifyCardCharge — happy path', () => {
           cardChargedLog({ cardId: 1n, amount: ONE_GUSD * 2n, logIndex: 2 }),
         ],
       }),
-    ])
-    const proof = await verifyCardCharge(reader, BASE_INPUT)
+      BASE_INPUT,
+    )
     expect(proof.cardId).toBe(1n)
     expect(proof.amount).toBe(ONE_GUSD * 2n)
     expect(proof.logIndex).toBe(2)
   })
 })
 
-describe('verifyCardCharge — rejections', () => {
-  test('rejects a hash the chain has never seen', async () => {
-    const error = await expectRejection(null, 'transaction_not_found')
-    expect(error.message).toContain(txHash(1))
+describe('verifyChargeReceipt — rejections', () => {
+  test('rejects a settlement transaction that reverted after inclusion', () => {
+    expectRejection(chargeReceipt({ status: 'reverted' }), 'settlement_failed')
   })
 
-  test('rejects a reverted transaction', async () => {
-    await expectRejection(chargeReceipt({ status: 'reverted' }), 'transaction_reverted')
+  test('rejects a receipt with no logs at all', () => {
+    expectRejection(chargeReceipt({ logs: [] }), 'no_charge_event')
   })
 
-  test('rejects a receipt with no logs at all', async () => {
-    await expectRejection(chargeReceipt({ logs: [] }), 'no_charge_event')
+  test('rejects a receipt whose logs are all unrelated events', () => {
+    expectRejection(chargeReceipt({ logs: [unrelatedLog()] }), 'no_charge_event')
   })
 
-  test('rejects a receipt whose logs are all unrelated events', async () => {
-    await expectRejection(chargeReceipt({ logs: [unrelatedLog()] }), 'no_charge_event')
-  })
-
-  test('rejects a CardCharged emitted by a lookalike contract (impersonation)', async () => {
-    // The attack: deploy a contract that emits a byte-identical CardCharged with
-    // perfect merchant, cardId and amount. Nothing was actually paid — only the
-    // emitting address distinguishes it from the real vault.
-    const error = await expectRejection(
+  test('rejects a CardCharged emitted by a lookalike contract (impersonation)', () => {
+    // Under merchant-pull this is no longer a hostile client — we chose the
+    // address we called. It is now the guard against a misconfigured
+    // CARD_VAULT_ADDRESS, or a vault that re-emits through an inner contract:
+    // the topics prove nothing about who emitted them, only the address does.
+    const error = expectRejection(
       chargeReceipt({
         logs: [
           cardChargedLog({
@@ -169,8 +309,8 @@ describe('verifyCardCharge — rejections', () => {
     expect(error.message).toContain(VAULT_ADDRESS)
   })
 
-  test('ignores a lookalike log even when the real vault also charged', async () => {
-    const reader = new StubReceiptReader([
+  test('ignores a lookalike log even when the real vault also charged', () => {
+    const proof = verifyChargeReceipt(
       chargeReceipt({
         logs: [
           cardChargedLog({
@@ -182,55 +322,43 @@ describe('verifyCardCharge — rejections', () => {
           cardChargedLog({ cardId: 1n, amount: ONE_GUSD, logIndex: 1 }),
         ],
       }),
-    ])
-    const proof = await verifyCardCharge(reader, BASE_INPUT)
+      BASE_INPUT,
+    )
     expect(proof.amount).toBe(ONE_GUSD)
     expect(proof.logIndex).toBe(1)
   })
 
-  test('rejects a charge that paid a different merchant', async () => {
-    const error = await expectRejection(
+  test('rejects a charge that paid a different merchant', () => {
+    const error = expectRejection(
       chargeReceipt({ logs: [cardChargedLog({ merchant: OTHER_MERCHANT })] }),
       'wrong_merchant',
     )
     expect(error.message).toContain(MERCHANT_ADDRESS)
   })
 
-  test('rejects a charge whose cardId is not the one claimed in X-PAYMENT', async () => {
-    const error = await expectRejection(
+  test('rejects a charge whose cardId is not the one we charged', () => {
+    const error = expectRejection(
       chargeReceipt({ logs: [cardChargedLog({ cardId: 42n })] }),
       'card_id_mismatch',
     )
     expect(error.message).toContain('42')
   })
 
-  test('rejects a charge below the list price', async () => {
-    const error = await expectRejection(
+  test('rejects a charge below the list price', () => {
+    const error = expectRejection(
       chargeReceipt({ logs: [cardChargedLog({ amount: ONE_GUSD - 1n })] }),
       'amount_below_price',
     )
     expect(error.message).toContain('999999')
   })
 
-  test('rejects a zero-amount charge', async () => {
-    await expectRejection(
-      chargeReceipt({ logs: [cardChargedLog({ amount: 0n })] }),
-      'amount_below_price',
-    )
+  test('rejects a zero-amount charge', () => {
+    expectRejection(chargeReceipt({ logs: [cardChargedLog({ amount: 0n })] }), 'amount_below_price')
   })
 
-  test('maps a reader failure to chain_unavailable, not to a rejected payment', async () => {
-    const reader = new StubReceiptReader()
-    reader.failure = new Error('fetch failed')
-    await expect(verifyCardCharge(reader, BASE_INPUT)).rejects.toMatchObject({
-      name: 'PaymentError',
-      code: 'chain_unavailable',
-    })
-  })
-
-  test('drops a log with our topic0 but an undecodable body', async () => {
+  test('drops a log with our topic0 but an undecodable body', () => {
     // topic0 matches but the indexed topics are missing, so viem cannot decode.
-    await expectRejection(
+    expectRejection(
       chargeReceipt({
         logs: [{ address: VAULT_ADDRESS, topics: [CARD_CHARGED_TOPIC], data: '0x', logIndex: 0 }],
       }),
@@ -239,186 +367,254 @@ describe('verifyCardCharge — rejections', () => {
   })
 })
 
-describe('InMemoryReceiptStore', () => {
-  test('claims a hash once', () => {
-    const store = new InMemoryReceiptStore()
-    expect(store.claim(txHash(1))).toBe(true)
-    expect(store.claim(txHash(1))).toBe(false)
-    expect(store.has(txHash(1))).toBe(true)
+describe('InMemorySettlementStore', () => {
+  const proof = (cardId: bigint): ChargeProof => ({
+    transactionHash: txHash(Number(cardId)),
+    blockNumber: 1n,
+    blockHash: txHash(9),
+    logIndex: 0,
+    vault: VAULT_ADDRESS,
+    cardId,
+    vaultOwner: VAULT_OWNER,
+    merchant: MERCHANT_ADDRESS,
+    amount: ONE_GUSD,
+    released: 0n,
+  })
+
+  test('claims a card once', () => {
+    const store = new InMemorySettlementStore()
+    expect(store.claim(1n)).toBe(true)
+    expect(store.claim(1n)).toBe(false)
+    expect(store.has(1n)).toBe(true)
     expect(store.size).toBe(1)
   })
 
-  test('normalises case, so a re-cased hash cannot be replayed', () => {
-    const store = new InMemoryReceiptStore()
-    const lower = txHash(0xabc)
-    expect(store.claim(lower)).toBe(true)
-    expect(store.claim(lower.toUpperCase().replace('0X', '0x') as Hash)).toBe(false)
+  test('release makes a card claimable again', () => {
+    const store = new InMemorySettlementStore()
+    store.claim(1n)
+    store.release(1n)
+    expect(store.has(1n)).toBe(false)
+    expect(store.claim(1n)).toBe(true)
   })
 
-  test('release makes a hash claimable again', () => {
-    const store = new InMemoryReceiptStore()
-    store.claim(txHash(1))
-    store.release(txHash(1))
-    expect(store.has(txHash(1))).toBe(false)
-    expect(store.claim(txHash(1))).toBe(true)
+  test('an undelivered settlement can be taken exactly once', () => {
+    const store = new InMemorySettlementStore()
+    store.claim(1n)
+    expect(store.takeUndelivered(1n)).toBeNull()
+
+    store.record(1n, proof(1n))
+    expect(store.takeUndelivered(1n)?.transactionHash).toBe(txHash(1))
+    // Taking is what makes a burst of retries ship one report, not five.
+    expect(store.takeUndelivered(1n)).toBeNull()
+    expect(store.has(1n)).toBe(true)
+    expect(store.claim(1n)).toBe(false)
+  })
+
+  test('a consumed card is never undelivered again', () => {
+    const store = new InMemorySettlementStore()
+    store.claim(1n)
+    store.consume(1n)
+    expect(store.takeUndelivered(1n)).toBeNull()
+    expect(store.claim(1n)).toBe(false)
   })
 
   test('evicts oldest entries past maxEntries', () => {
-    const store = new InMemoryReceiptStore({ maxEntries: 2 })
-    store.claim(txHash(1))
-    store.claim(txHash(2))
-    store.claim(txHash(3))
+    const store = new InMemorySettlementStore({ maxEntries: 2 })
+    store.claim(1n)
+    store.claim(2n)
+    store.claim(3n)
     expect(store.size).toBe(2)
-    expect(store.has(txHash(1))).toBe(false)
-    expect(store.has(txHash(3))).toBe(true)
+    expect(store.has(1n)).toBe(false)
+    expect(store.has(3n)).toBe(true)
   })
 
   test('rejects a nonsensical bound', () => {
-    expect(() => new InMemoryReceiptStore({ maxEntries: 0 })).toThrow(TypeError)
+    expect(() => new InMemorySettlementStore({ maxEntries: 0 })).toThrow(TypeError)
   })
 })
 
 describe('MerchantFacilitator', () => {
-  const build = (receipts: readonly ChargeReceipt[] = [chargeReceipt()]) => {
-    const reader = new StubReceiptReader(receipts)
+  const build = (submitter = new StubChargeSubmitter()) => {
     const facilitator = new MerchantFacilitator({
-      reader,
+      submitter,
       vault: VAULT_ADDRESS,
       merchant: MERCHANT_ADDRESS,
     })
-    return { reader, facilitator }
+    return { submitter, facilitator }
   }
 
-  test('verifies and returns a proof', async () => {
-    const { facilitator } = build()
-    const proof = await facilitator.verify({
-      transactionHash: txHash(1),
-      cardId: 1n,
-      minAmount: ONE_GUSD,
-    })
+  test('charges the card and returns a proof of its own transaction', async () => {
+    const { facilitator, submitter } = build()
+    const proof = await facilitator.settle({ cardId: 1n, amount: ONE_GUSD })
+
+    expect(submitter.calls).toEqual([{ cardId: 1n, amount: ONE_GUSD }])
     expect(proof.amount).toBe(ONE_GUSD)
+    expect(proof.transactionHash).toBe(txHash(1))
     expect(facilitator.vault).toBe(VAULT_ADDRESS)
     expect(facilitator.merchant).toBe(MERCHANT_ADDRESS)
   })
 
-  test('rejects a receipt that was already redeemed', async () => {
-    const { facilitator, reader } = build()
-    const input = { transactionHash: txHash(1), cardId: 1n, minAmount: ONE_GUSD }
-    await facilitator.verify(input)
+  test('refuses a card it already settled, without charging again', async () => {
+    const { facilitator, submitter } = build()
+    const input = { cardId: 1n, amount: ONE_GUSD }
+    await facilitator.settle(input)
 
-    await expect(facilitator.verify(input)).rejects.toMatchObject({
+    await expect(facilitator.settle(input)).rejects.toMatchObject({
       name: 'PaymentError',
-      code: 'receipt_already_used',
+      code: 'card_already_settled',
     })
-    // The replay is refused without spending another RPC read.
-    expect(reader.calls).toBe(1)
+    expect(submitter.calls).toHaveLength(1)
   })
 
-  test('claims the hash before its first await, so concurrent replays lose', async () => {
-    const { facilitator } = build()
-    const input = { transactionHash: txHash(1), cardId: 1n, minAmount: ONE_GUSD }
+  test('claims the card before its first await, so concurrent replays lose', async () => {
+    const { facilitator, submitter } = build()
+    const input = { cardId: 1n, amount: ONE_GUSD }
 
     const results = await Promise.allSettled([
-      facilitator.verify(input),
-      facilitator.verify(input),
+      facilitator.settle(input),
+      facilitator.settle(input),
     ])
-    const fulfilled = results.filter((result) => result.status === 'fulfilled')
-    const rejected = results.filter((result) => result.status === 'rejected')
-    expect(fulfilled).toHaveLength(1)
-    expect(rejected).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter((result) => result.status === 'rejected')).toHaveLength(1)
+    expect(submitter.calls).toHaveLength(1)
   })
 
-  test('releases the claim when verification fails, so an honest retry works', async () => {
-    const { facilitator, reader } = build([])
-    const input = { transactionHash: txHash(1), cardId: 1n, minAmount: ONE_GUSD }
+  test('releases the claim when the charge never happened, so a retry works', async () => {
+    const { facilitator, submitter } = build()
+    const input = { cardId: 1n, amount: ONE_GUSD }
 
-    reader.failure = new Error('fetch failed')
-    await expect(facilitator.verify(input)).rejects.toMatchObject({
-      code: 'chain_unavailable',
+    submitter.failure = new Error('insufficient funds for gas')
+    await expect(facilitator.settle(input)).rejects.toMatchObject({
+      code: 'settlement_failed',
     })
-    expect(facilitator.store.has(txHash(1))).toBe(false)
+    expect(facilitator.store.has(1n)).toBe(false)
 
-    reader.failure = null
-    reader.set(chargeReceipt())
-    await expect(facilitator.verify(input)).resolves.toMatchObject({ cardId: 1n })
+    submitter.failure = null
+    await expect(facilitator.settle(input)).resolves.toMatchObject({ cardId: 1n })
   })
 
-  test('release() hands a consumed receipt back to the client', async () => {
-    const { facilitator } = build()
-    const input = { transactionHash: txHash(1), cardId: 1n, minAmount: ONE_GUSD }
-    await facilitator.verify(input)
-    expect(facilitator.store.has(txHash(1))).toBe(true)
-
-    facilitator.release(txHash(1))
-    await expect(facilitator.verify(input)).resolves.toMatchObject({ cardId: 1n })
-  })
-
-  test('a rejected payment does not burn the hash', async () => {
-    const { facilitator } = build([
-      chargeReceipt({ logs: [cardChargedLog({ merchant: OTHER_MERCHANT })] }),
-    ])
-    const input = { transactionHash: txHash(1), cardId: 1n, minAmount: ONE_GUSD }
-    await expect(facilitator.verify(input)).rejects.toMatchObject({
-      code: 'wrong_merchant',
+  test('a vault refusal does not burn the card id', async () => {
+    const { facilitator, submitter } = build()
+    submitter.refuseWith = 'merchant_scope_mismatch'
+    await expect(facilitator.settle({ cardId: 1n, amount: ONE_GUSD })).rejects.toMatchObject({
+      code: 'merchant_scope_mismatch',
     })
     expect(facilitator.store.size).toBe(0)
   })
 
+  test('a mined transaction that fails verification keeps the card claimed', async () => {
+    // The money may well have moved. Charging a second card would be the one
+    // response that is definitely wrong.
+    const submitter = new StubChargeSubmitter().set(
+      1n,
+      chargeReceipt({ logs: [cardChargedLog({ merchant: OTHER_MERCHANT })] }),
+    )
+    const { facilitator } = build(submitter)
+
+    await expect(facilitator.settle({ cardId: 1n, amount: ONE_GUSD })).rejects.toMatchObject({
+      code: 'wrong_merchant',
+    })
+    expect(facilitator.store.has(1n)).toBe(true)
+  })
+
+  test('settling leaves nothing to collect: the caller already holds the proof', async () => {
+    const { facilitator } = build()
+    await facilitator.settle({ cardId: 1n, amount: ONE_GUSD })
+    expect(facilitator.takeSettled(1n)).toBeNull()
+  })
+
+  test('a returned settlement can be collected exactly once', async () => {
+    const { facilitator } = build()
+    const proof = await facilitator.settle({ cardId: 1n, amount: ONE_GUSD })
+
+    facilitator.returnUndelivered(1n, proof)
+    expect(facilitator.takeSettled(1n)?.cardId).toBe(1n)
+    expect(facilitator.takeSettled(1n)).toBeNull()
+  })
+
   test('accepts an injected store, so the guard can be persisted later', async () => {
-    const store = new InMemoryReceiptStore()
-    store.claim(txHash(1))
+    const store = new InMemorySettlementStore()
+    store.claim(1n)
     const facilitator = new MerchantFacilitator({
-      reader: new StubReceiptReader([chargeReceipt()]),
+      submitter: new StubChargeSubmitter(),
       vault: VAULT_ADDRESS,
       merchant: MERCHANT_ADDRESS,
       store,
     })
-    await expect(
-      facilitator.verify({ transactionHash: txHash(1), cardId: 1n, minAmount: ONE_GUSD }),
-    ).rejects.toMatchObject({ code: 'receipt_already_used' })
+    await expect(facilitator.settle({ cardId: 1n, amount: ONE_GUSD })).rejects.toMatchObject({
+      code: 'card_already_settled',
+    })
   })
 })
 
-describe('createViemReceiptReader', () => {
-  test('maps a viem receipt onto the narrow reader shape', async () => {
-    const reader = createViemReceiptReader({
-      async getTransactionReceipt({ hash }) {
-        return {
-          transactionHash: hash,
-          status: 'success' as const,
-          blockNumber: 5n,
-          blockHash: txHash(5),
-          logs: [
-            {
-              address: getAddress(VAULT_ADDRESS),
-              topics: cardChargedLog().topics,
-              data: cardChargedLog().data,
-              logIndex: 3,
-            },
-          ],
-        }
+describe('createViemChargeSubmitter', () => {
+  const wallet = (hash: Hash | Error) => ({
+    writeContract: async (args: { functionName: string; args: readonly unknown[] }) => {
+      calls.push(args)
+      if (hash instanceof Error) throw hash
+      return hash
+    },
+  })
+  let calls: { functionName: string; args: readonly unknown[] }[] = []
+
+  test('calls charge(cardId, amount) on the configured vault and maps the receipt', async () => {
+    calls = []
+    const submitter = createViemChargeSubmitter({
+      wallet: wallet(txHash(3)),
+      receipts: {
+        async waitForTransactionReceipt({ hash }) {
+          return {
+            transactionHash: hash,
+            status: 'success' as const,
+            blockNumber: 5n,
+            blockHash: txHash(5),
+            logs: [
+              {
+                address: getAddress(VAULT_ADDRESS),
+                topics: cardChargedLog().topics,
+                data: cardChargedLog().data,
+                logIndex: 3,
+              },
+            ],
+          }
+        },
       },
+      vault: VAULT_ADDRESS,
     })
 
-    const receipt = await reader.getTransactionReceipt(txHash(1))
-    expect(receipt?.blockNumber).toBe(5n)
-    expect(receipt?.logs[0]?.logIndex).toBe(3)
+    const receipt = await submitter.submitCharge({ cardId: 9n, amount: ONE_GUSD })
+    expect(calls[0]?.functionName).toBe('charge')
+    expect(calls[0]?.args).toEqual([9n, ONE_GUSD])
+    expect(receipt.transactionHash).toBe(txHash(3))
+    expect(receipt.blockNumber).toBe(5n)
+    expect(receipt.logs[0]?.logIndex).toBe(3)
   })
 
-  test('maps TransactionReceiptNotFoundError to null rather than throwing', async () => {
-    const notFound = Object.assign(new Error('not found'), {
-      name: 'TransactionReceiptNotFoundError',
+  test('classifies a revert instead of leaking a viem error', async () => {
+    calls = []
+    const submitter = createViemChargeSubmitter({
+      wallet: wallet(revertError('MerchantScopeMismatch', [1n, MERCHANT_ADDRESS, OTHER_MERCHANT])),
+      receipts: { waitForTransactionReceipt: () => Promise.reject(new Error('unused')) },
+      vault: VAULT_ADDRESS,
     })
-    const reader = createViemReceiptReader({
-      getTransactionReceipt: () => Promise.reject(notFound),
+
+    await expect(submitter.submitCharge(CHARGE_REQUEST)).rejects.toMatchObject({
+      name: 'PaymentError',
+      code: 'merchant_scope_mismatch',
     })
-    await expect(reader.getTransactionReceipt(txHash(1))).resolves.toBeNull()
   })
 
-  test('propagates any other RPC failure', async () => {
-    const reader = createViemReceiptReader({
-      getTransactionReceipt: () => Promise.reject(new Error('429 Too Many Requests')),
+  test('a receipt we cannot read is chain_unavailable, and names the tx', async () => {
+    calls = []
+    const submitter = createViemChargeSubmitter({
+      wallet: wallet(txHash(3)),
+      receipts: { waitForTransactionReceipt: () => Promise.reject(new Error('timeout')) },
+      vault: VAULT_ADDRESS,
     })
-    await expect(reader.getTransactionReceipt(txHash(1))).rejects.toThrow('429')
+
+    await expect(submitter.submitCharge(CHARGE_REQUEST)).rejects.toMatchObject({
+      name: 'PaymentError',
+      code: 'chain_unavailable',
+    })
   })
 })

@@ -14,6 +14,7 @@ import {
   type Hash,
   type Hex,
 } from 'viem'
+import { privateKeyToAddress } from 'viem/accounts'
 
 import { defineMerchantConfig, type MerchantConfig } from '../src/config.js'
 import type {
@@ -21,18 +22,34 @@ import type {
   InsightsReader,
   InsightsTransaction,
 } from '../src/insights.js'
+import { PaymentError, type PaymentErrorCode } from '../src/x402.js'
 import {
   cardChargedAbi,
   type ChargeLog,
   type ChargeReceipt,
-  type ChargeReceiptReader,
+  type ChargeRequest,
+  type ChargeSubmitter,
 } from '../src/verify.js'
 
 /* -------------------------------------------------------------------------- */
-/* Addresses                                                                  */
+/* Keys and addresses                                                         */
 /* -------------------------------------------------------------------------- */
 
-export const MERCHANT_ADDRESS = getAddress('0x1111111111111111111111111111111111111111')
+/**
+ * The merchant's signing key. A throwaway constant, never funded on any chain —
+ * but a *real* key, because `config.ts` derives the merchant address from it and
+ * refuses to start when the two disagree.
+ */
+export const MERCHANT_PRIVATE_KEY =
+  '0x1111111111111111111111111111111111111111111111111111111111111111' as Hex
+
+/** Address of {@link MERCHANT_PRIVATE_KEY}. */
+export const MERCHANT_ADDRESS = privateKeyToAddress(MERCHANT_PRIVATE_KEY)
+
+/** A valid key that belongs to somebody else. */
+export const FOREIGN_PRIVATE_KEY =
+  '0x2222222222222222222222222222222222222222222222222222222222222222' as Hex
+
 export const VAULT_ADDRESS = getAddress('0x2222222222222222222222222222222222222222')
 export const TOKEN_ADDRESS = getAddress('0x3333333333333333333333333333333333333333')
 export const VAULT_OWNER = getAddress('0x4444444444444444444444444444444444444444')
@@ -61,6 +78,7 @@ export function testConfig(
 ): MerchantConfig {
   return defineMerchantConfig({
     merchantAddress: MERCHANT_ADDRESS,
+    merchantPrivateKey: MERCHANT_PRIVATE_KEY,
     vaultAddress: VAULT_ADDRESS,
     tokenAddress: TOKEN_ADDRESS,
     baseUrl: 'https://insights.giwacard.test',
@@ -143,31 +161,47 @@ export function chargeReceipt(options: ChargeReceiptOptions = {}): ChargeReceipt
 }
 
 /* -------------------------------------------------------------------------- */
-/* Receipt reader stub                                                        */
+/* Charge submitter stub                                                      */
 /* -------------------------------------------------------------------------- */
 
-/** Deterministic, offline {@link ChargeReceiptReader}. */
-export class StubReceiptReader implements ChargeReceiptReader {
-  readonly #receipts = new Map<string, ChargeReceipt>()
-  /** Number of times the reader was asked for a receipt. */
-  calls = 0
-  /** When set, every read throws this instead of answering. */
+/**
+ * Deterministic, offline {@link ChargeSubmitter}.
+ *
+ * Stands in for "the merchant's key, the vault and the sequencer". By default
+ * every card charges successfully and produces a receipt derived from its card
+ * id, so a test that does not care about settlement mechanics says nothing about
+ * them. `refuseWith` makes the vault reject the next charge; `failure` makes the
+ * submission itself blow up the way an unfunded key or a dead RPC would.
+ */
+export class StubChargeSubmitter implements ChargeSubmitter {
+  /** Every charge this submitter was asked to make, in order. */
+  readonly calls: ChargeRequest[] = []
+  /** Receipts to return, keyed by cardId. Missing ids get a default receipt. */
+  readonly receipts = new Map<string, ChargeReceipt>()
+  /** When set, the vault refuses every charge with this payment code. */
+  refuseWith: PaymentErrorCode | null = null
+  /** When set, submission throws this — an unfunded key, a dead RPC, anything. */
   failure: unknown = null
 
-  constructor(receipts: readonly ChargeReceipt[] = []) {
-    for (const receipt of receipts) this.set(receipt)
-  }
-
-  /** Register (or replace) a receipt. */
-  set(receipt: ChargeReceipt): this {
-    this.#receipts.set(receipt.transactionHash.toLowerCase(), receipt)
+  /** Pin the receipt a specific card charges to. */
+  set(cardId: bigint, receipt: ChargeReceipt): this {
+    this.receipts.set(cardId.toString(), receipt)
     return this
   }
 
-  async getTransactionReceipt(hash: Hash): Promise<ChargeReceipt | null> {
-    this.calls++
+  async submitCharge(request: ChargeRequest): Promise<ChargeReceipt> {
+    this.calls.push(request)
     if (this.failure !== null) throw this.failure
-    return this.#receipts.get(hash.toLowerCase()) ?? null
+    if (this.refuseWith !== null) {
+      throw new PaymentError(this.refuseWith, `stub: the vault refused card ${request.cardId}`)
+    }
+    return (
+      this.receipts.get(request.cardId.toString()) ??
+      chargeReceipt({
+        hash: txHash(Number(request.cardId)),
+        logs: [cardChargedLog({ cardId: request.cardId, amount: request.amount })],
+      })
+    )
   }
 }
 

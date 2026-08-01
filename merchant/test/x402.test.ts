@@ -8,7 +8,9 @@ import {
   RELEASE_POLICY,
   SETTLEMENT_CALL,
   SETTLEMENT_EVENT,
+  SETTLEMENT_SUBMITTER,
   X402_VERSION,
+  assertExpectedVenue,
   buildPaymentRequiredBody,
   buildPaymentRequirements,
   decodePaymentHeader,
@@ -21,6 +23,7 @@ import {
 } from '../src/x402.js'
 
 import {
+  IMPOSTOR_VAULT,
   MERCHANT_ADDRESS,
   ONE_GUSD,
   TOKEN_ADDRESS,
@@ -76,12 +79,21 @@ describe('buildPaymentRequirements', () => {
     expect(requirements.extra.priceDisplay).toBe('1')
   })
 
-  test('tells the client which call to make and which event will be checked', () => {
+  test('tells the client which call settles it and which event will be checked', () => {
     expect(requirements.extra.settlementCall).toBe(SETTLEMENT_CALL)
     expect(requirements.extra.settlementCall).toContain('charge')
     expect(requirements.extra.settlementEvent).toBe(SETTLEMENT_EVENT)
     expect(requirements.extra.settlementEvent).toContain('CardCharged')
-    expect(requirements.extra.payloadFields).toEqual(['transactionHash', 'cardId'])
+    expect(requirements.extra.payloadFields).toEqual(['cardId', 'vault', 'chainId'])
+  })
+
+  test('says who submits the charge, because the contract only allows one answer', () => {
+    // CardVault.charge requires msg.sender == card.merchantScope and pays
+    // msg.sender. A client that submitted it would revert and pay nobody, so
+    // "who submits" is not an implementation detail the wire can leave out.
+    expect(requirements.extra.settledBy).toBe(SETTLEMENT_SUBMITTER)
+    expect(requirements.extra.settledBy).toBe('merchant')
+    expect(requirements.extra.payloadFields).not.toContain('transactionHash')
   })
 
   test('states the KTD-5 release policy on the wire', () => {
@@ -123,19 +135,29 @@ describe('encode/decode X-PAYMENT', () => {
     x402Version: X402_VERSION,
     scheme: GIWA_VAULT_CHARGE_SCHEME,
     network: config.network,
-    payload: { transactionHash: txHash(0xabc), cardId: 12n },
+    payload: { cardId: 12n, vault: VAULT_ADDRESS, chainId: 91_342 },
   } as const
 
   test('round-trips through base64', () => {
     const decoded = decodePaymentHeader(encodePaymentHeader(payment), decodeOptions)
-    expect(decoded.payload.transactionHash).toBe(txHash(0xabc))
     expect(decoded.payload.cardId).toBe(12n)
+    expect(decoded.payload.vault).toBe(VAULT_ADDRESS)
+    expect(decoded.payload.chainId).toBe(91_342)
     expect(decoded.scheme).toBe(GIWA_VAULT_CHARGE_SCHEME)
+  })
+
+  test('a cardId alone is a complete payload', () => {
+    // The client submits nothing and knows no transaction hash: the whole point
+    // of merchant-pull is that presenting the card is the entire client-side act.
+    const decoded = decodePaymentHeader(b64({ payload: { cardId: '5' } }), decodeOptions)
+    expect(decoded.payload.cardId).toBe(5n)
+    expect(decoded.payload.vault).toBeUndefined()
+    expect(decoded.payload.chainId).toBeUndefined()
   })
 
   test('accepts raw JSON, for curl-driven demos', () => {
     const decoded = decodePaymentHeader(
-      JSON.stringify({ payload: { transactionHash: txHash(2), cardId: '3' } }),
+      JSON.stringify({ payload: { cardId: '3' } }),
       decodeOptions,
     )
     expect(decoded.payload.cardId).toBe(3n)
@@ -148,40 +170,62 @@ describe('encode/decode X-PAYMENT', () => {
   })
 
   test('accepts a numeric cardId', () => {
-    const decoded = decodePaymentHeader(
-      b64({ payload: { transactionHash: txHash(2), cardId: 9 } }),
-      decodeOptions,
-    )
+    const decoded = decodePaymentHeader(b64({ payload: { cardId: 9 } }), decodeOptions)
     expect(decoded.payload.cardId).toBe(9n)
   })
 
   test('accepts a cardId far beyond Number.MAX_SAFE_INTEGER as a string', () => {
     const huge = (2n ** 200n).toString()
-    const decoded = decodePaymentHeader(
-      b64({ payload: { transactionHash: txHash(2), cardId: huge } }),
-      decodeOptions,
-    )
+    const decoded = decodePaymentHeader(b64({ payload: { cardId: huge } }), decodeOptions)
     expect(decoded.payload.cardId).toBe(2n ** 200n)
   })
 
-  test('lowercases the transaction hash so replay keys cannot be re-cased', () => {
-    const mixed =
-      '0xAABBCCDDEEFF00112233445566778899AABBCCDDEEFF001122334455667788AA' as const
-    const decoded = decodePaymentHeader(
-      b64({ payload: { transactionHash: mixed, cardId: '1' } }),
-      decodeOptions,
-    )
-    expect(decoded.payload.transactionHash).toBe(mixed.toLowerCase() as `0x${string}`)
-  })
-
   test('defaults an omitted version/scheme/network to this merchant', () => {
-    const decoded = decodePaymentHeader(
-      b64({ payload: { transactionHash: txHash(2), cardId: '1' } }),
-      decodeOptions,
-    )
+    const decoded = decodePaymentHeader(b64({ payload: { cardId: '1' } }), decodeOptions)
     expect(decoded.x402Version).toBe(X402_VERSION)
     expect(decoded.scheme).toBe(GIWA_VAULT_CHARGE_SCHEME)
     expect(decoded.network).toBe(config.network)
+  })
+})
+
+describe('assertExpectedVenue', () => {
+  const venue = { vault: VAULT_ADDRESS, chainId: 91_342 }
+
+  test('a client that states nothing is trusting the requirements it read', () => {
+    expect(() => assertExpectedVenue({ cardId: 1n }, venue)).not.toThrow()
+  })
+
+  test('accepts a matching vault and chain, case-insensitively', () => {
+    expect(() =>
+      assertExpectedVenue(
+        {
+          cardId: 1n,
+          vault: VAULT_ADDRESS.toLowerCase() as `0x${string}`,
+          chainId: 91_342,
+        },
+        venue,
+      ),
+    ).not.toThrow()
+  })
+
+  test('refuses a vault the merchant does not settle through', () => {
+    try {
+      assertExpectedVenue({ cardId: 1n, vault: IMPOSTOR_VAULT }, venue)
+      throw new Error('expected a vault_mismatch')
+    } catch (error) {
+      expect(error).toBeInstanceOf(PaymentError)
+      expect((error as PaymentError).code).toBe('vault_mismatch')
+      expect((error as PaymentError).message).toContain(VAULT_ADDRESS)
+    }
+  })
+
+  test('refuses a chain the merchant does not settle on', () => {
+    try {
+      assertExpectedVenue({ cardId: 1n, chainId: 8_453 }, venue)
+      throw new Error('expected an unsupported_network')
+    } catch (error) {
+      expect((error as PaymentError).code).toBe('unsupported_network')
+    }
   })
 })
 
@@ -224,41 +268,33 @@ describe('decodePaymentHeader rejections', () => {
     reject(b64({ scheme: GIWA_VAULT_CHARGE_SCHEME }), 'malformed_payment_header')
   })
 
-  test('missing or malformed transactionHash', () => {
-    reject(b64({ payload: { cardId: '1' } }), 'malformed_payment_header')
-    reject(b64({ payload: { transactionHash: 'nope', cardId: '1' } }), 'malformed_payment_header')
-    reject(b64({ payload: { transactionHash: '0xabc', cardId: '1' } }), 'malformed_payment_header')
-    reject(
-      b64({ payload: { transactionHash: `${txHash(1)}ff`, cardId: '1' } }),
-      'malformed_payment_header',
-    )
-  })
-
   test('missing or malformed cardId', () => {
-    reject(b64({ payload: { transactionHash: txHash(1) } }), 'malformed_payment_header')
-    reject(b64({ payload: { transactionHash: txHash(1), cardId: 'one' } }), 'malformed_payment_header')
-    reject(b64({ payload: { transactionHash: txHash(1), cardId: -1 } }), 'malformed_payment_header')
-    reject(b64({ payload: { transactionHash: txHash(1), cardId: 1.5 } }), 'malformed_payment_header')
+    reject(b64({ payload: {} }), 'malformed_payment_header')
+    reject(b64({ payload: { cardId: 'one' } }), 'malformed_payment_header')
+    reject(b64({ payload: { cardId: -1 } }), 'malformed_payment_header')
+    reject(b64({ payload: { cardId: 1.5 } }), 'malformed_payment_header')
   })
 
   test('cardId 0 is never a real card', () => {
-    const error = reject(
-      b64({ payload: { transactionHash: txHash(1), cardId: '0' } }),
-      'malformed_payment_header',
-    )
+    const error = reject(b64({ payload: { cardId: '0' } }), 'malformed_payment_header')
     expect(error.message).toContain('start at 1')
   })
 
+  test('malformed optional fields are refused rather than ignored', () => {
+    // Silently dropping a garbled `vault` would turn the client's own safety
+    // check off without telling it.
+    reject(b64({ payload: { cardId: '1', vault: 'not-an-address' } }), 'malformed_payment_header')
+    reject(b64({ payload: { cardId: '1', chainId: 0 } }), 'malformed_payment_header')
+    reject(b64({ payload: { cardId: '1', chainId: 'abc' } }), 'malformed_payment_header')
+  })
+
   test('unsupported x402 version', () => {
-    reject(
-      b64({ x402Version: 2, payload: { transactionHash: txHash(1), cardId: '1' } }),
-      'malformed_payment_header',
-    )
+    reject(b64({ x402Version: 2, payload: { cardId: '1' } }), 'malformed_payment_header')
   })
 
   test('unsupported scheme gets its own code, mentioning why not Permit2', () => {
     const error = reject(
-      b64({ scheme: 'exact_evm', payload: { transactionHash: txHash(1), cardId: '1' } }),
+      b64({ scheme: 'exact_evm', payload: { cardId: '1' } }),
       'unsupported_scheme',
     )
     expect(error.message).toContain('CardVault.charge')
@@ -267,7 +303,7 @@ describe('decodePaymentHeader rejections', () => {
 
   test('unsupported network gets its own code', () => {
     const error = reject(
-      b64({ network: 'base-sepolia', payload: { transactionHash: txHash(1), cardId: '1' } }),
+      b64({ network: 'base-sepolia', payload: { cardId: '1' } }),
       'unsupported_network',
     )
     expect(error.message).toContain('giwa-sepolia')
@@ -275,8 +311,8 @@ describe('decodePaymentHeader rejections', () => {
 
   test('every rejection explains the expected shape', () => {
     const error = reject('garbage!!', 'malformed_payment_header')
-    expect(error.message).toContain('transactionHash')
     expect(error.message).toContain('cardId')
+    expect(error.message).toContain('the merchant submits CardVault.charge itself')
   })
 })
 
@@ -310,30 +346,46 @@ describe('PAYMENT-RESPONSE settlement receipt', () => {
     expect(() => decodeSettlementHeader(b64({ success: false }))).toThrow(PaymentError)
     expect(() => decodeSettlementHeader(b64({ success: true }))).toThrow(PaymentError)
   })
+
+  test('rejects a receipt whose transaction is not a 32-byte hash', () => {
+    expect(() =>
+      decodeSettlementHeader(b64({ ...settlement, transaction: '0xabc' })),
+    ).toThrow(PaymentError)
+  })
 })
 
 describe('httpStatusForPaymentError', () => {
-  test('client-fixable failures are 402', () => {
+  test('failures the buyer can act on are 402', () => {
     const clientCodes: PaymentErrorCode[] = [
       'payment_required',
       'malformed_payment_header',
       'unsupported_scheme',
       'unsupported_network',
-      'transaction_not_found',
-      'transaction_reverted',
-      'no_charge_event',
-      'wrong_vault',
-      'wrong_merchant',
-      'card_id_mismatch',
-      'amount_below_price',
-      'receipt_already_used',
+      'vault_mismatch',
+      'card_already_settled',
+      'card_already_used',
+      'card_not_active',
+      'card_expired',
+      'card_cap_too_low',
+      'merchant_scope_mismatch',
     ]
     for (const code of clientCodes) {
       expect(httpStatusForPaymentError(code)).toBe(402)
     }
   })
 
-  test('our own failure is a 503, so an agent does not pay twice for it', () => {
-    expect(httpStatusForPaymentError('chain_unavailable')).toBe(503)
+  test('our own failures are 503, so an agent does not present another card', () => {
+    const merchantCodes: PaymentErrorCode[] = [
+      'settlement_failed',
+      'chain_unavailable',
+      'no_charge_event',
+      'wrong_vault',
+      'wrong_merchant',
+      'card_id_mismatch',
+      'amount_below_price',
+    ]
+    for (const code of merchantCodes) {
+      expect(httpStatusForPaymentError(code)).toBe(503)
+    }
   })
 })

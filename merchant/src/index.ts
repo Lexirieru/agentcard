@@ -1,11 +1,14 @@
 /**
  * The GiwaCard demo merchant: a paid API that answers HTTP 402 with payment
- * requirements, then serves its product once payment is verified onchain.
+ * requirements, then settles the card it is presented and serves its product.
  *
  * The product is "GIWA Insights" (see `insights.ts`), priced at 1 gUSD per
  * request. The payment scheme is x402-shaped but settled by `CardVault.charge`
- * rather than Permit2 (see `x402.ts` for why). Verification is done by the
- * merchant's own facilitator, which is read-only and holds no key (`verify.ts`).
+ * rather than Permit2 (see `x402.ts` for why), and the merchant is the party
+ * that submits that charge — the contract requires `msg.sender ==
+ * card.merchantScope` and pays `msg.sender`, so there is no other direction it
+ * could go (KTD-9). The merchant's own facilitator does the charging and then
+ * verifies the `CardCharged` event on its own receipt (`verify.ts`).
  *
  * This module is the library surface: `createMerchantApp` returns a Hono app you
  * can mount anywhere `fetch` exists. `src/server.ts` is the standalone binary.
@@ -17,10 +20,12 @@ import type { Address } from 'viem'
 
 import {
   createMerchantPublicClient,
+  createMerchantWalletClient,
   giwaSepolia,
   giwaSepoliaExplorer,
   type MerchantClientOptions,
   type MerchantPublicClient,
+  type MerchantWalletClient,
 } from './chain.js'
 import { loadMerchantConfig, type EnvBag, type MerchantConfig } from './config.js'
 import {
@@ -30,11 +35,12 @@ import {
   type InsightsReader,
 } from './insights.js'
 import {
-  createViemReceiptReader,
+  createViemChargeSubmitter,
   MerchantFacilitator,
   type ChargeProof,
 } from './verify.js'
 import {
+  assertExpectedVenue,
   buildPaymentRequiredBody,
   buildPaymentRequirements,
   decodePaymentHeader,
@@ -74,7 +80,7 @@ export const INSIGHTS_RESOURCE: PaidResourceSpec = {
 export interface MerchantAppOptions {
   /** Validated merchant configuration. */
   readonly config: MerchantConfig
-  /** Read-only facilitator that judges payments. */
+  /** Facilitator that charges presented cards and verifies the result. */
   readonly facilitator: MerchantFacilitator
   /** Chain reads backing the report. */
   readonly insightsReader: InsightsReader
@@ -113,7 +119,8 @@ function buildSettlement(
  * Create the merchant HTTP app.
  *
  * Free: `GET /`, `GET /health`, `GET /.well-known/x402`.
- * Paid: `GET /insights` — 1 gUSD, settled by `CardVault.charge`.
+ * Paid: `GET /insights` — 1 gUSD, settled by the merchant calling
+ * `CardVault.charge` on the card the client presents.
  */
 export function createMerchantApp(options: MerchantAppOptions): Hono {
   const { config, facilitator, insightsReader } = options
@@ -126,7 +133,7 @@ export function createMerchantApp(options: MerchantAppOptions): Hono {
 
   const app = new Hono()
 
-  /** 402 with the full requirements body. Always the same shape. */
+  /** 402 (or 503) with the full requirements body. Always the same shape. */
   const refuse = (context: Context, error: PaymentError): Response => {
     const status = httpStatusForPaymentError(error.code)
     return context.json(
@@ -151,10 +158,14 @@ export function createMerchantApp(options: MerchantAppOptions): Hono {
       paidResources: [requirements.resource],
       howToPay: [
         `GET ${requirements.resource} with no ${PAYMENT_HEADER} header to receive the 402 requirements.`,
-        `Submit ${SETTLEMENT_CALL} from your session EOA, charging at least ${requirements.maxAmountRequired} base units to ${config.merchantAddress}.`,
-        `Retry the request with ${PAYMENT_HEADER}: base64({"payload":{"transactionHash":"0x…","cardId":"<id>"}}).`,
-        `On success the report is returned with a ${PAYMENT_RESPONSE_HEADER} settlement receipt.`,
+        `Mint a GiwaCard scoped to ${config.merchantAddress} with a cap of at least ` +
+          `${requirements.maxAmountRequired} base units, in vault ${config.vaultAddress}.`,
+        `Retry the request with ${PAYMENT_HEADER}: base64({"payload":{"cardId":"<id>"}}). ` +
+          'You do not submit any transaction and you spend no gas.',
+        `The merchant submits ${SETTLEMENT_CALL} itself and returns the report with a ` +
+          `${PAYMENT_RESPONSE_HEADER} receipt naming the settlement transaction.`,
       ],
+      settledBy: requirements.extra.settledBy,
       releasePolicy: requirements.extra.releasePolicy,
       releasePolicyNote: requirements.extra.releasePolicyNote,
       links: {
@@ -171,8 +182,8 @@ export function createMerchantApp(options: MerchantAppOptions): Hono {
       time: now().toISOString(),
       chainId: config.chainId,
       network: config.network,
-      // Operational visibility: how many receipts the replay guard is holding.
-      consumedReceipts: facilitator.store.size,
+      // Operational visibility: how many cards the replay guard is holding.
+      settledCards: facilitator.store.size,
     }),
   )
 
@@ -192,8 +203,9 @@ export function createMerchantApp(options: MerchantAppOptions): Hono {
         new PaymentError(
           'payment_required',
           `Payment required: ${config.priceDisplay} ${config.tokenSymbol}. ` +
-            `Charge a GiwaCard via ${SETTLEMENT_CALL} on ${config.vaultAddress}, then retry with the ` +
-            `${PAYMENT_HEADER} header. See "accepts" for the full requirements.`,
+            `Mint a GiwaCard in vault ${config.vaultAddress} scoped to ${config.merchantAddress}, ` +
+            `then retry with the ${PAYMENT_HEADER} header naming its card id. The merchant ` +
+            'charges the card itself. See "accepts" for the full requirements.',
         ),
       )
     }
@@ -201,26 +213,35 @@ export function createMerchantApp(options: MerchantAppOptions): Hono {
     let payment
     try {
       payment = decodePaymentHeader(header, { network: config.network })
-    } catch (error) {
-      if (error instanceof PaymentError) return refuse(context, error)
-      throw error
-    }
-
-    let proof: ChargeProof
-    try {
-      proof = await facilitator.verify({
-        transactionHash: payment.payload.transactionHash,
-        cardId: payment.payload.cardId,
-        minAmount: config.priceAtomic,
+      assertExpectedVenue(payment.payload, {
+        vault: config.vaultAddress,
+        chainId: config.chainId,
       })
     } catch (error) {
       if (error instanceof PaymentError) return refuse(context, error)
       throw error
     }
 
-    // Payment is verified and the receipt is consumed. If we now fail to build
-    // the product, the client has paid for nothing — so hand the receipt back
-    // and let them retry with it rather than charging a second card.
+    const cardId = payment.payload.cardId
+
+    // A card whose charge landed but whose report never shipped is already paid
+    // for. Collecting it from the recorded proof is the only honest option: the
+    // card is `Used` onchain, so there is nothing left to charge. `takeSettled`
+    // is atomic, so a burst of retries still ships exactly one report.
+    let proof = facilitator.takeSettled(cardId)
+    if (proof === null) {
+      try {
+        proof = await facilitator.settle({ cardId, amount: config.priceAtomic })
+      } catch (error) {
+        if (error instanceof PaymentError) return refuse(context, error)
+        throw error
+      }
+    }
+
+    // The card is charged and the money has moved. If we now fail to build the
+    // product the buyer cannot pay again — the card is spent — so the
+    // settlement goes back on record and the same card id collects the report
+    // on a retry, without a second charge.
     let report: GiwaInsightsReport
     try {
       report = await generateInsightsReport(insightsReader, {
@@ -230,16 +251,17 @@ export function createMerchantApp(options: MerchantAppOptions): Hono {
         now,
       })
     } catch (cause) {
-      facilitator.release(payment.payload.transactionHash)
+      facilitator.returnUndelivered(cardId, proof)
       return context.json(
         {
           error:
-            'Payment verified, but the report could not be generated because the GIWA RPC was ' +
-            'unreachable. Your receipt has been released — retry the same request with the same ' +
-            `${PAYMENT_HEADER} header; you will not be charged twice.`,
+            'Your card was charged and the payment is settled, but the report could not be ' +
+            'generated because the GIWA RPC was unreachable. Retry the same request with the ' +
+            `same ${PAYMENT_HEADER} header — the card will not be charged twice.`,
           reason: 'report_unavailable',
-          receiptReleased: true,
-          transaction: payment.payload.transactionHash,
+          settled: true,
+          transaction: proof.transactionHash,
+          cardId: cardId.toString(),
           detail: cause instanceof Error ? cause.message : String(cause),
         },
         503,
@@ -257,32 +279,42 @@ export function createMerchantApp(options: MerchantAppOptions): Hono {
   return app
 }
 
-/** A wired-up merchant: config, facilitator, chain client and HTTP app. */
+/** A wired-up merchant: config, facilitator, chain clients and HTTP app. */
 export interface MerchantService {
   readonly config: MerchantConfig
   readonly app: Hono
   readonly facilitator: MerchantFacilitator
   readonly publicClient: MerchantPublicClient
+  /** Bound to the merchant's funded key. Only the facilitator uses it. */
+  readonly walletClient: MerchantWalletClient
 }
 
 /**
  * Wire a merchant against the real GIWA Sepolia RPC.
  *
- * Builds exactly one viem client — read-only, with the retry/backoff policy from
- * `chain.ts` — and shares it between the facilitator and the report generator.
- * No wallet client is created, because the merchant never signs anything.
+ * Builds one read client — with the retry/backoff policy from `chain.ts` —
+ * shared between the facilitator and the report generator, plus one wallet
+ * client bound to the merchant's key. The wallet client is handed to the
+ * facilitator's submitter and to nothing else.
  */
 export function createMerchantService(
   config: MerchantConfig,
   clientOptions: MerchantClientOptions = {},
 ): MerchantService {
-  const publicClient = createMerchantPublicClient({
+  const transport = { url: config.rpcUrl, ...clientOptions.transport }
+  const publicClient = createMerchantPublicClient({ ...clientOptions, transport })
+  const walletClient = createMerchantWalletClient({
     ...clientOptions,
-    transport: { url: config.rpcUrl, ...clientOptions.transport },
+    transport,
+    privateKey: config.merchantPrivateKey,
   })
 
   const facilitator = new MerchantFacilitator({
-    reader: createViemReceiptReader(publicClient),
+    submitter: createViemChargeSubmitter({
+      wallet: walletClient,
+      receipts: publicClient,
+      vault: config.vaultAddress as Address,
+    }),
     vault: config.vaultAddress as Address,
     merchant: config.merchantAddress as Address,
   })
@@ -293,14 +325,14 @@ export function createMerchantService(
     insightsReader: createViemInsightsReader(publicClient),
   })
 
-  return { config, app, facilitator, publicClient }
+  return { config, app, facilitator, publicClient, walletClient }
 }
 
 /**
  * Convenience wrapper: read configuration from the environment and wire it up.
  *
  * @throws {import('./config.js').MerchantConfigError} when configuration is
- * missing or malformed.
+ * missing or malformed — including a missing or mismatched `MERCHANT_PRIVATE_KEY`.
  */
 export function createMerchantServiceFromEnv(env: EnvBag): MerchantService {
   return createMerchantService(loadMerchantConfig(env))

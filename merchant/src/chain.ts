@@ -1,5 +1,5 @@
 /**
- * GIWA Sepolia chain definition and read-only clients for the merchant service.
+ * GIWA Sepolia chain definition and viem clients for the merchant service.
  *
  * `merchant/` is a standalone service, not a consumer of the `giwacard` npm
  * package, so the chain definition is copied here rather than imported. The
@@ -10,20 +10,28 @@
  * GIWA endpoints are documented as rate-limited and dev-only, so every read goes
  * through exponential backoff with jitter and `Retry-After` support.
  *
- * KTD-6/KTD-9: the merchant facilitator only ever *reads* the chain. There is
- * deliberately no wallet client and no funded key in this file — a settlement
- * that the merchant had to submit would need one, and ours does not.
+ * KTD-9: the merchant *settles* — `CardVault.charge` pays `msg.sender` and
+ * demands `msg.sender == card.merchantScope`, so the merchant is the one who
+ * runs the card. This module therefore builds two clients: a read-only public
+ * client for reports and receipts, and a wallet client bound to the merchant's
+ * funded key for the one write the service performs. The retry wrapper below
+ * deliberately does **not** cover writes: see `NON_RETRYABLE_ACTIONS`.
  */
 
 import {
   createPublicClient,
+  createWalletClient,
   defineChain,
   http,
+  type Account,
   type Chain,
+  type Hex,
   type HttpTransport,
   type HttpTransportConfig,
   type PublicClient,
+  type WalletClient,
 } from 'viem'
+import { privateKeyToAccount } from 'viem/accounts'
 import { chainConfig } from 'viem/op-stack'
 
 /* -------------------------------------------------------------------------- */
@@ -456,8 +464,14 @@ export async function withRpcRetry<T>(
 }
 
 /**
- * Actions that must never be retried automatically. The merchant never writes,
- * so this exists to keep the proxy honest if someone hands it a wallet client.
+ * Actions that must never be retried automatically.
+ *
+ * This list stopped being theoretical when the merchant grew a key. Silently
+ * re-sending `writeContract` after a timeout is how one intended charge becomes
+ * two broadcast transactions competing for the same nonce; the vault would
+ * reject the second (the card is `Used`), but the merchant would still have paid
+ * gas for it and the failure would look like a mystery. A settlement is retried
+ * by a *client* presenting its card again, never by this transport.
  */
 const NON_RETRYABLE_ACTIONS: ReadonlySet<string> = new Set([
   'sendTransaction',
@@ -526,7 +540,7 @@ export function merchantTransport(
   })
 }
 
-/** Options for {@link createMerchantPublicClient}. */
+/** Options for {@link createMerchantPublicClient} and its wallet counterpart. */
 export interface MerchantClientOptions {
   transport?: MerchantTransportOptions
   /** Retry policy for read actions. Pass `false` to opt out entirely. */
@@ -536,7 +550,7 @@ export interface MerchantClientOptions {
   pollingInterval?: number
 }
 
-/** The only viem client this service ever builds: read-only, no account. */
+/** The read client: no account, so it cannot spend anything. */
 export type MerchantPublicClient = PublicClient<HttpTransport, Chain>
 
 /**
@@ -556,6 +570,36 @@ export function createMerchantPublicClient(
       ? { pollingInterval: options.pollingInterval }
       : {}),
   }) as MerchantPublicClient
+  if (options.retry === false) return client
+  return withRetryingActions(client, options.retry ?? {})
+}
+
+/** The write client: bound to the merchant account, able to charge a card. */
+export type MerchantWalletClient = WalletClient<HttpTransport, Chain, Account>
+
+/** Options for {@link createMerchantWalletClient}. */
+export interface MerchantWalletClientOptions extends MerchantClientOptions {
+  /** The merchant's 32-byte signing key, already validated by `config.ts`. */
+  privateKey: Hex
+}
+
+/**
+ * Wallet client bound to the merchant's funded account.
+ *
+ * Built once, at wiring time, and handed straight to the facilitator's
+ * {@link import('./verify.js').ChargeSubmitter} — nothing else in the service
+ * receives it. `withRetryingActions` is applied for parity with the read client,
+ * but it passes `writeContract` and every signing action through untouched (see
+ * `NON_RETRYABLE_ACTIONS`), so a timed-out charge is never silently re-sent.
+ */
+export function createMerchantWalletClient(
+  options: MerchantWalletClientOptions,
+): MerchantWalletClient {
+  const client = createWalletClient({
+    account: privateKeyToAccount(options.privateKey),
+    chain: options.chain ?? giwaSepolia,
+    transport: merchantTransport(options.transport),
+  }) as MerchantWalletClient
   if (options.retry === false) return client
   return withRetryingActions(client, options.retry ?? {})
 }

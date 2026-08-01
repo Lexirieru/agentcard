@@ -1,13 +1,24 @@
 /**
  * Configuration for the GIWA Insights demo merchant.
  *
- * Everything the facilitator needs to judge a payment lives here: which vault it
- * trusts, which merchant address must be paid, which token, and how much. None
- * of it is a secret — the merchant holds no key (KTD-9), so this file has no
- * private-key handling by design.
+ * Everything the facilitator needs to settle a payment lives here: which vault it
+ * charges through, which merchant address the cards are scoped to, which token,
+ * how much — and, since KTD-9 puts the merchant on the paying end of
+ * `CardVault.charge`, **the merchant's own private key**.
+ *
+ * That key is the one secret this service holds. Two rules follow, and both are
+ * enforced below rather than documented and hoped for:
+ *
+ * - it is **required**, and its absence is a startup error naming the variable,
+ *   not a 500 on the first paid request;
+ * - the address it derives to must equal `MERCHANT_ADDRESS`, because
+ *   `CardVault.charge` requires `msg.sender == card.merchantScope`. A merchant
+ *   configured with a key for some other address would revert on every single
+ *   charge, and the only symptom would be a stream of failed settlements.
  */
 
-import { getAddress, isAddress, type Address } from 'viem'
+import { getAddress, isAddress, isHex, type Address, type Hex } from 'viem'
+import { privateKeyToAddress } from 'viem/accounts'
 
 import { GIWA_SEPOLIA_ID, GIWA_SEPOLIA_NETWORK, GIWA_SEPOLIA_RPC_URL } from './chain.js'
 
@@ -31,7 +42,7 @@ export const DEFAULT_INSIGHTS_CONCURRENCY = 6 as const
 
 /**
  * Default `maxTimeoutSeconds` advertised in payment requirements: how long the
- * client may take between receiving the 402 and presenting a receipt.
+ * client may take between receiving the 402 and presenting a card.
  */
 export const DEFAULT_PAYMENT_TIMEOUT_SECONDS = 120 as const
 
@@ -47,11 +58,26 @@ export class MerchantConfigError extends Error {
   }
 }
 
+/**
+ * Rough cost of one `CardVault.charge` on GIWA Sepolia, as a human string.
+ *
+ * A ~70k-gas L2 transaction at a sub-gwei base fee lands around 1e-5 ETH all in.
+ * Quoted in the missing-key error so an operator can size a faucet claim instead
+ * of guessing — the answer is "one daily claim covers hundreds of charges",
+ * which is a different feeling from "the merchant needs a funded key".
+ */
+export const APPROX_CHARGE_COST_ETH = '1e-5' as const
+
 /** Raw, unvalidated configuration accepted by {@link defineMerchantConfig}. */
 export interface MerchantConfigInput {
-  /** Address that must receive the charge — the `merchant` in `CardCharged`. */
+  /** Address that charges the card and receives the funds — `merchant` in `CardCharged`. */
   merchantAddress: string
-  /** `CardVault` proxy address whose events are the only ones trusted. */
+  /**
+   * Private key of {@link MerchantConfigInput.merchantAddress}, funded with ETH
+   * for gas. Required: the merchant submits the settlement transaction.
+   */
+  merchantPrivateKey: string
+  /** `CardVault` proxy address the merchant charges through. */
   vaultAddress: string
   /** gUSD token address, advertised as the `asset` in requirements. */
   tokenAddress: string
@@ -63,7 +89,7 @@ export interface MerchantConfigInput {
   chainId?: number
   /** Network slug. Default `giwa-sepolia`. */
   network?: string
-  /** RPC endpoint for the read-only facilitator + insights reads. */
+  /** RPC endpoint for settlement, receipt reads and insights reads. */
   rpcUrl?: string
   /** TCP port for the standalone server. */
   port?: number
@@ -78,6 +104,14 @@ export interface MerchantConfigInput {
 /** Validated, frozen merchant configuration. */
 export interface MerchantConfig {
   readonly merchantAddress: Address
+  /**
+   * The merchant's signing key.
+   *
+   * Never logged, never returned by an endpoint, and never put in an error
+   * message — {@link MerchantConfigError} messages quote the *setting name*, not
+   * the value, which is why the validators below never interpolate this one.
+   */
+  readonly merchantPrivateKey: Hex
   readonly vaultAddress: Address
   readonly tokenAddress: Address
   readonly tokenSymbol: string
@@ -117,6 +151,50 @@ function requireAddress(setting: string, value: string | undefined): Address {
     throw new MerchantConfigError(setting, `${setting} must not be the zero address.`)
   }
   return checksummed
+}
+
+/**
+ * Validate the merchant's signing key and derive its address.
+ *
+ * The key itself never reaches an error message. A malformed key is described by
+ * its length and prefix; quoting it would put a live secret in a log line and in
+ * whatever collects that log.
+ *
+ * @throws {MerchantConfigError} when the key is absent or not a 32-byte hex key.
+ */
+export function parsePrivateKey(
+  setting: string,
+  value: string | undefined,
+): { privateKey: Hex; address: Address } {
+  if (value === undefined || value.trim() === '') {
+    throw new MerchantConfigError(
+      setting,
+      `${setting} is required. Since KTD-9 the merchant submits CardVault.charge itself, so ` +
+        'it needs a funded EOA: set this to the private key of MERCHANT_ADDRESS and keep ' +
+        `that address topped up with GIWA Sepolia ETH. One charge costs about ` +
+        `${APPROX_CHARGE_COST_ETH} ETH, so a single daily faucet claim covers hundreds.`,
+    )
+  }
+  const trimmed = value.trim()
+  const prefixed = (trimmed.startsWith('0x') ? trimmed : `0x${trimmed}`) as Hex
+  if (!isHex(prefixed) || prefixed.length !== 66) {
+    throw new MerchantConfigError(
+      setting,
+      `${setting} must be a 32-byte hex private key (0x + 64 hex chars); got ${prefixed.length - 2} ` +
+        'characters after the 0x prefix. The value is not echoed here on purpose.',
+    )
+  }
+
+  let address: Address
+  try {
+    address = privateKeyToAddress(prefixed)
+  } catch {
+    throw new MerchantConfigError(
+      setting,
+      `${setting} is 32 bytes of hex but is not a valid secp256k1 private key.`,
+    )
+  }
+  return { privateKey: prefixed, address }
 }
 
 /**
@@ -213,6 +291,19 @@ export function defineMerchantConfig(input: MerchantConfigInput): MerchantConfig
     )
   }
 
+  const { privateKey, address: signerAddress } = parsePrivateKey(
+    'MERCHANT_PRIVATE_KEY',
+    input.merchantPrivateKey,
+  )
+  if (signerAddress !== merchantAddress) {
+    throw new MerchantConfigError(
+      'MERCHANT_PRIVATE_KEY',
+      `MERCHANT_PRIVATE_KEY derives to ${signerAddress}, but MERCHANT_ADDRESS is ` +
+        `${merchantAddress}. CardVault.charge requires msg.sender == card.merchantScope, so a ` +
+        'key for any other address would revert on every settlement. Fix one of the two.',
+    )
+  }
+
   const priceDisplay = (input.priceGusd ?? DEFAULT_PRICE_GUSD).trim()
   const priceAtomic = parsePriceToAtomic('MERCHANT_PRICE_GUSD', priceDisplay, GUSD_DECIMALS)
 
@@ -223,6 +314,7 @@ export function defineMerchantConfig(input: MerchantConfigInput): MerchantConfig
 
   return Object.freeze({
     merchantAddress,
+    merchantPrivateKey: privateKey,
     vaultAddress,
     tokenAddress,
     tokenSymbol: GUSD_SYMBOL,
@@ -272,10 +364,18 @@ function optionalInt(setting: string, raw: string | undefined): number | undefin
   return parsed
 }
 
+/** Environment variables that must be present for the merchant to start. */
+export const REQUIRED_ENV_VARS: readonly string[] = [
+  'MERCHANT_ADDRESS',
+  'MERCHANT_PRIVATE_KEY',
+  'CARD_VAULT_ADDRESS',
+  'GUSD_ADDRESS',
+]
+
 /**
  * Build a {@link MerchantConfig} from environment variables.
  *
- * Required: `MERCHANT_ADDRESS`, `CARD_VAULT_ADDRESS`, `GUSD_ADDRESS`.
+ * Required: see {@link REQUIRED_ENV_VARS}.
  * Optional: `MERCHANT_PRICE_GUSD`, `MERCHANT_BASE_URL`, `MERCHANT_PORT` (or
  * `PORT`), `GIWA_RPC_URL`, `MERCHANT_CHAIN_ID`, `MERCHANT_NETWORK`,
  * `MERCHANT_INSIGHTS_BLOCKS`, `MERCHANT_INSIGHTS_CONCURRENCY`,
@@ -286,6 +386,7 @@ function optionalInt(setting: string, raw: string | undefined): number | undefin
 export function loadMerchantConfig(env: EnvBag): MerchantConfig {
   return defineMerchantConfig({
     merchantAddress: env['MERCHANT_ADDRESS'] ?? '',
+    merchantPrivateKey: env['MERCHANT_PRIVATE_KEY'] ?? '',
     vaultAddress: env['CARD_VAULT_ADDRESS'] ?? '',
     tokenAddress: env['GUSD_ADDRESS'] ?? '',
     priceGusd: env['MERCHANT_PRICE_GUSD'],

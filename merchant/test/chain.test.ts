@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { privateKeyToAddress } from 'viem/accounts'
 import { chainConfig } from 'viem/op-stack'
 
 import {
@@ -11,10 +12,12 @@ import {
   GIWA_SEPOLIA_RPC_URL,
   RpcRetryLimitError,
   createMerchantPublicClient,
+  createMerchantWalletClient,
   giwaSepolia,
   giwaSepoliaExplorer,
   isTransientRpcError,
   retryAfterMs,
+  withRetryingActions,
   withRpcRetry,
 } from '../src/chain.js'
 
@@ -178,8 +181,49 @@ describe('createMerchantPublicClient', () => {
     expect(client.transport.url).toBe('http://127.0.0.1:8545')
   })
 
-  test('has no account: the merchant never signs anything', () => {
+  test('has no account: reads cannot spend, whatever else the service can do', () => {
     const client = createMerchantPublicClient({ retry: false })
     expect(client.account).toBeUndefined()
+  })
+})
+
+describe('createMerchantWalletClient', () => {
+  const KEY = '0x1111111111111111111111111111111111111111111111111111111111111111' as const
+
+  test('binds the merchant account and targets GIWA Sepolia', () => {
+    const client = createMerchantWalletClient({ retry: false, privateKey: KEY })
+    expect(client.chain.id).toBe(91_342)
+    expect(client.account.address).toBe(privateKeyToAddress(KEY))
+  })
+
+  test('accepts a transport override, for a dedicated or local RPC', () => {
+    const client = createMerchantWalletClient({
+      retry: false,
+      privateKey: KEY,
+      transport: { url: 'http://127.0.0.1:8545' },
+    })
+    expect(client.transport.url).toBe('http://127.0.0.1:8545')
+  })
+
+  test('never auto-retries a write, so one charge cannot become two', () => {
+    // The retry wrapper is applied for parity with the read client, but
+    // `writeContract` is on NON_RETRYABLE_ACTIONS: silently re-broadcasting a
+    // settlement after a timeout is how a merchant pays gas twice for one sale.
+    let attempts = 0
+    const stub = {
+      writeContract: () => {
+        attempts++
+        return Promise.reject(new Error('fetch failed'))
+      },
+    }
+    const wrapped = withRetryingActions(stub, { maxAttempts: 4, sleep: async () => {} })
+    return wrapped.writeContract().then(
+      () => {
+        throw new Error('expected the write to reject')
+      },
+      () => {
+        expect(attempts).toBe(1)
+      },
+    )
   })
 })
