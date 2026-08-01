@@ -579,22 +579,20 @@ function useTypedTranscript(active: boolean) {
 
 function ChatDemoSection() {
   const [ref, inView] = useInView<HTMLDivElement>()
-  const { typed, typingIndex, visibleCount, thinking } = useTypedTranscript(inView)
+  const { typed, typingIndex, thinking } = useTypedTranscript(inView)
 
   return (
     <section
       ref={ref}
-      className={`${GUTTER} scroll-mt-24 bg-[#0A0B11] py-28 sm:py-40`}
+      className={`${GUTTER} flex min-h-screen scroll-mt-24 items-center bg-[#0A0B11] py-24`}
     >
       <div className={`${CONTAINER} ${WIDE}`}>
-        <div className="flex flex-col gap-5 sm:gap-7">
+        <div className="flex flex-col gap-4 sm:gap-6">
           {TRANSCRIPT.map((entry, i) => {
-            const shown = typed[i] ?? ''
-            if (!shown && i > visibleCount) return null
-
             const isYou = entry.speaker === 'you'
-            // Label only above the first bubble of a run by the same speaker.
             const startsRun = i === 0 || TRANSCRIPT[i - 1]?.speaker !== entry.speaker
+            const shown = typed[i] ?? ''
+            const started = shown.length > 0 || i === typingIndex
 
             return (
               <div
@@ -602,43 +600,57 @@ function ChatDemoSection() {
                 className={`flex flex-col ${isYou ? 'items-start' : 'items-end'}`}
               >
                 {startsRun && (
-                  <span className="mb-3 px-2 text-sm text-white/40 sm:text-[15px]">
+                  <span
+                    className={`mb-2 px-3 text-xs text-white/35 transition-opacity duration-300 sm:text-sm ${
+                      started ? 'opacity-100' : 'opacity-0'
+                    }`}
+                  >
                     {isYou ? 'User:' : 'Agent:'}
                   </span>
                 )}
+                {/*
+                  Every bubble is laid out from the start and only faded in, so
+                  the section's height never changes while the transcript types.
+                  Rendering them as they arrive made the background grow.
+                */}
                 <div
-                  className={`max-w-full rounded-[2rem] px-6 py-3.5 sm:rounded-full sm:px-9 sm:py-5 ${
-                    isYou ? 'bg-white/[0.09] text-white' : 'bg-[#3B6BF5] text-white'
+                  className={`max-w-full rounded-[1.75rem] px-6 py-3 transition-opacity duration-300 sm:rounded-full sm:px-8 sm:py-4 ${
+                    started ? 'opacity-100' : 'opacity-0'
+                  } ${
+                    isYou
+                      ? 'bg-white/[0.07] text-white/90'
+                      : 'bg-[#F4F0ED] text-[#18161B]'
                   }`}
                   style={{
-                    fontSize: 'clamp(1.15rem, 3vw, 2.1rem)',
-                    lineHeight: 1.18,
+                    fontSize: 'clamp(1.05rem, 2.4vw, 1.75rem)',
+                    lineHeight: 1.2,
                     letterSpacing: '-0.02em',
                   }}
                 >
-                  <span className="font-light">{shown}</span>
+                  <span className="font-light">
+                    {shown || entry.text}
+                  </span>
                   {i === typingIndex && (
-                    <span className="ml-1 inline-block h-[0.75em] w-[0.06em] animate-pulse bg-current align-middle" />
+                    <span className="ml-1 inline-block h-[0.7em] w-[0.055em] animate-pulse bg-current align-middle" />
                   )}
                 </div>
               </div>
             )
           })}
-
-          {thinking && (
-            <div className="flex justify-end gap-2 pr-8">
-              {[0, 1, 2].map((d) => (
-                <span
-                  key={d}
-                  className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#3B6BF5]"
-                  style={{ animationDelay: `${d * 0.15}s` }}
-                />
-              ))}
-            </div>
-          )}
         </div>
 
-        <p className="mt-16 max-w-xl text-[15px] leading-relaxed text-white/50">
+        <div className="mt-10 flex h-3 items-center justify-end gap-1.5 pr-6">
+          {thinking &&
+            [0, 1, 2].map((d) => (
+              <span
+                key={d}
+                className="h-2 w-2 animate-pulse rounded-full bg-[#F4F0ED]/60"
+                style={{ animationDelay: `${d * 0.15}s` }}
+              />
+            ))}
+        </div>
+
+        <p className="mt-6 max-w-lg text-[15px] leading-relaxed text-white/45">
           No standing balance, and no approval the agent can widen later. The card
           exists for one charge, and the vault settles the rest back to you.
         </p>
@@ -834,6 +846,124 @@ function ClosingSection() {
   )
 }
 
+
+function Footer() {
+  return (
+    <footer className={`${GUTTER} border-t border-[#18161B]/10 bg-[#F4F0ED] py-14 sm:py-20`}>
+      <div className={`${CONTAINER} ${WIDE}`}>
+        <div className="flex flex-col gap-10 md:flex-row md:justify-between">
+          <div className="max-w-xs">
+            <div className="flex items-center gap-2.5">
+              <svg viewBox="0 0 256 256" className="h-5 w-5" aria-hidden>
+                {LOGO_PATHS.map((d) => (
+                  <path key={d} d={d} className="fill-[#18161B]" />
+                ))}
+              </svg>
+              <span className="text-sm font-medium uppercase tracking-wide text-[#18161B]">
+                GiwaCard
+              </span>
+            </div>
+            <p className="mt-4 text-[14px] leading-relaxed text-[#18161B]/55">
+              One-time onchain spend cards for AI agents, on GIWA Sepolia.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-x-10 gap-y-8 sm:grid-cols-3">
+            <div>
+              <p className={EYEBROW}>Product</p>
+              <ul className="mt-4 flex flex-col gap-2.5 text-[14px] text-[#18161B]/70">
+                <li>
+                  <button
+                    onClick={() => scrollToSection(SECTION_FEATURES)}
+                    className="transition-colors hover:text-[#18161B]"
+                  >
+                    How it works
+                  </button>
+                </li>
+                <li>
+                  <button
+                    onClick={() => scrollToSection(SECTION_INSTALL)}
+                    className="transition-colors hover:text-[#18161B]"
+                  >
+                    Install
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            <div>
+              <p className={EYEBROW}>Onchain</p>
+              <ul className="mt-4 flex flex-col gap-2.5 text-[14px] text-[#18161B]/70">
+                <li>
+                  <a
+                    href={VAULT_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="transition-colors hover:text-[#18161B]"
+                  >
+                    CardVault
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="transition-colors hover:text-[#18161B]"
+                  >
+                    gUSD
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href="https://docs.giwa.io"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="transition-colors hover:text-[#18161B]"
+                  >
+                    GIWA docs
+                  </a>
+                </li>
+              </ul>
+            </div>
+
+            <div>
+              <p className={EYEBROW}>Source</p>
+              <ul className="mt-4 flex flex-col gap-2.5 text-[14px] text-[#18161B]/70">
+                <li>
+                  <a
+                    href={REPO_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="transition-colors hover:text-[#18161B]"
+                  >
+                    GitHub
+                  </a>
+                </li>
+                <li>
+                  <a
+                    href={README_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="transition-colors hover:text-[#18161B]"
+                  >
+                    Docs
+                  </a>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-12 flex flex-col gap-3 border-t border-[#18161B]/10 pt-6 text-[13px] text-[#18161B]/45 sm:flex-row sm:items-center sm:justify-between">
+          <p>Testnet only. gUSD is a test token with an open faucet and no value.</p>
+          <p>Not affiliated with agentcard.sh.</p>
+        </div>
+      </div>
+    </footer>
+  )
+}
+
 function Content() {
   return (
     <main className="relative z-[4] bg-[#F4F0ED]">
@@ -842,6 +972,7 @@ function Content() {
       <InstallSection />
       <ProofSection />
       <ClosingSection />
+      <Footer />
     </main>
   )
 }
