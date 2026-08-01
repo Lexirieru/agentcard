@@ -16,3 +16,4 @@ node_modules/
 smartcontracts/lib/
 smartcontracts/cache/
 smartcontracts/out/
+.gstack/
