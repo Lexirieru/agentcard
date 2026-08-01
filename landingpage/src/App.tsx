@@ -61,11 +61,11 @@ const INSTALL_COMMAND = 'npx giwacard'
  */
 const TRANSCRIPT: { speaker: 'you' | 'agent'; text: string; emphasis?: boolean }[] = [
   { speaker: 'you', text: 'buy the insights report' },
-  { speaker: 'agent', text: 'minting a card. 1 gUSD, one merchant.' },
-  { speaker: 'agent', text: 'paid. the card is dead.' },
+  { speaker: 'agent', text: 'making a card. $1, one shop.' },
+  { speaker: 'agent', text: 'paid. that card is done.' },
   { speaker: 'you', text: 'put my Claude sub on giwacard' },
-  { speaker: 'agent', text: '20 gUSD a month — over your cap' },
-  { speaker: 'agent', text: 'queued for your approval.', emphasis: true },
+  { speaker: 'agent', text: '$20 a month — more than you allow' },
+  { speaker: 'agent', text: 'waiting on your yes.', emphasis: true },
 ]
 
 const FEATURES: { title: string; body: ReactNode }[] = [
@@ -76,24 +76,24 @@ const FEATURES: { title: string; body: ReactNode }[] = [
         <code className="font-code rounded bg-[#18161B]/[0.07] px-1.5 py-0.5 text-[13px]">
           npx giwacard
         </code>{' '}
-        walks you through a wallet, a vault, and your agent's session key.
+        sets up your wallet, your account, and the key your agent will use.
       </>
     ),
   },
   {
-    title: 'The limits live in the contract',
-    body: 'A cap, one merchant, an expiry. A compromised agent can’t argue with a revert.',
+    title: 'The limits are not a suggestion',
+    body: 'An amount, one shop, a deadline. If the agent is tricked into asking for more, it simply does not go through.',
   },
   {
     title: 'MCP server included',
-    body: 'Seven tools your agent gets out of the box, with no integration work on your side.',
+    body: 'Your agent gets seven ready-made actions. Nothing to build on your side.',
   },
 ]
 
 const PROOFS: { title: string; body: string; href: string; source: string }[] = [
   {
-    title: 'Contracts deployed and verified',
-    body: 'The CardVault is live on GIWA Sepolia with its source published — read it before you trust it.',
+    title: 'The code is published, not described',
+    body: 'Every line running your money is on the explorer. Read it before you trust it.',
     href: VAULT_URL,
     source: 'sepolia-explorer.giwa.io',
   },
@@ -104,14 +104,14 @@ const PROOFS: { title: string; body: string; href: string; source: string }[] = 
     source: 'github.com/Lexirieru/agentcard',
   },
   {
-    title: 'The agent can’t approve its own overspend',
-    body: 'Asserted against the live MCP tool list, not against a constant.',
+    title: 'The agent can never approve itself',
+    body: 'It has no way to say yes on your behalf. A test checks that on every build.',
     href: REPO_URL,
     source: 'github.com/Lexirieru/agentcard',
   },
   {
-    title: 'Deployment cost 0.0000102 ETH',
-    body: 'Gas is not the constraint on GIWA.',
+    title: 'Fees are rounding errors',
+    body: 'Setting all of this up on GIWA cost less than a cent.',
     href: VAULT_URL,
     source: 'sepolia-explorer.giwa.io',
   },
@@ -363,7 +363,7 @@ function HeroSection({ onSeeHow }: { onSeeHow: () => void }) {
           >
             <span className="h-2.5 w-2.5 rounded-full bg-white/80" />
             <span className="text-sm text-white/80 sm:text-[15px]">
-              Live on GIWA Sepolia · contracts verified
+              Live on GIWA · every contract published
             </span>
           </div>
 
@@ -408,9 +408,9 @@ function HeroSection({ onSeeHow }: { onSeeHow: () => void }) {
           style={{ animationDelay: '0.85s' }}
         >
           <p className="max-w-md text-[15px] leading-relaxed text-white/75 sm:text-base">
-            An AI agent handed a wallet loses it to one prompt injection. GiwaCard gives
-            it a single-use card instead — a cap, one merchant, an expiry, all enforced by
-            the contract. Anything past those limits stops and waits for you.
+            Give an AI agent your wallet and one bad instruction can empty it. Give it a
+            GiwaCard instead: a card that works once, at one shop, for an amount you set.
+            Ask for more than that and it stops and waits for you.
           </p>
         </div>
       </div>
@@ -481,16 +481,16 @@ function CardSection({
           style={{ animationDelay: '0.3s' }}
         >
           <Plus size={15} />
-          One-time authorization
+          Works once
         </div>
       </div>
 
       <div className="absolute inset-x-0 bottom-0 flex flex-col gap-8 px-5 pb-10 sm:px-10 sm:pb-14 md:flex-row md:items-end md:justify-between md:px-14 md:pb-16">
         <div className={staggerClass('max-w-md')} style={{ animationDelay: '0.7s' }}>
           <p className="text-[15px] leading-relaxed text-[#18161B]/75 sm:text-base">
-            The cap is locked up the moment the card is minted, so it can never spend more
-            than you gave it. The merchant charges it once. Whatever goes unspent is yours
-            again before the block is over.
+            The money is set aside the moment you make the card, so it can never spend more
+            than you gave it. The shop charges it once. Anything left over comes straight
+            back to you.
           </p>
           <a
             href={REPO_URL}
@@ -651,8 +651,8 @@ function ChatDemoSection() {
         </div>
 
         <p className="mt-6 max-w-lg text-[15px] leading-relaxed text-[#18161B]/55">
-          No standing balance, and no approval the agent can widen later. The card
-          exists for one charge, and the vault settles the rest back to you.
+          Nothing sits waiting to be spent, and nothing the agent can quietly widen
+          later. Each card covers one payment, and the rest of your money never moves.
         </p>
       </div>
     </section>
@@ -864,7 +864,7 @@ function Footer() {
               </span>
             </div>
             <p className="mt-4 text-[14px] leading-relaxed text-[#18161B]/55">
-              One-time onchain spend cards for AI agents, on GIWA Sepolia.
+              Cards that work once, for AI agents. Built on GIWA.
             </p>
           </div>
 
@@ -892,7 +892,7 @@ function Footer() {
             </div>
 
             <div>
-              <p className={EYEBROW}>Onchain</p>
+              <p className={EYEBROW}>On the chain</p>
               <ul className="mt-4 flex flex-col gap-2.5 text-[14px] text-[#18161B]/70">
                 <li>
                   <a
