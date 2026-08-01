@@ -16,7 +16,12 @@ const SPOTLIGHT_R = 260
 const GRID_CELL = 48
 const SWIPE_THRESHOLD = 40
 
-const NAV_ITEMS = ['Card', 'Rewards', 'Travel', 'Plans', 'Support']
+const NAV_ITEMS = ['Product', 'Agents', 'Contracts', 'Docs', 'GitHub']
+
+/** Deployed and verified on GIWA Sepolia — see smartcontracts/deployments. */
+const VAULT_URL =
+  'https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750'
+const REPO_URL = 'https://github.com/Lexirieru/agentcard'
 
 const LOGO_PATHS = [
   'M 128 192 L 128 256 L 64.5 256 L 32 223 L 0 192 L 0 128 L 64 128 Z',
@@ -104,7 +109,7 @@ function RevealLayer({ image }: { image: string }) {
   )
 }
 
-function HeroSection() {
+function HeroSection({ onSeeHow }: { onSeeHow: () => void }) {
   const sectionRef = useRef<HTMLElement>(null)
   const patternRef = useRef<SVGPatternElement>(null)
 
@@ -184,7 +189,7 @@ function HeroSection() {
           >
             <span className="h-2.5 w-2.5 rounded-full bg-white/80" />
             <span className="text-sm text-white/80 sm:text-[15px]">
-              World Banking system awards winner
+              Live on GIWA Sepolia · contracts verified
             </span>
           </div>
 
@@ -197,22 +202,30 @@ function HeroSection() {
               letterSpacing: '-0.03em',
             }}
           >
-            Enter New Places
+            Give an Agent a Card
             <br />
-            Without Starting Over
+            Not Your Wallet
           </h1>
 
           <div
             className="anim-stagger mt-8 flex flex-wrap items-center gap-3"
             style={{ animationDelay: '0.7s' }}
           >
-            <button className="rounded-full bg-white px-6 py-3 text-sm font-medium text-gray-900 transition-colors hover:bg-white/90">
-              See Benefits
-            </button>
-            <button className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-medium text-white backdrop-blur transition-colors hover:bg-white/10">
+            <button
+              onClick={onSeeHow}
+              className="flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-medium text-gray-900 transition-colors hover:bg-white/90"
+            >
               <Play size={13} fill="currentColor" />
-              Watch Demo
+              See how it works
             </button>
+            <a
+              href={VAULT_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="rounded-full border border-white/10 bg-white/5 px-6 py-3 text-sm font-medium text-white backdrop-blur transition-colors hover:bg-white/10"
+            >
+              Read the contract
+            </a>
           </div>
         </div>
 
@@ -221,9 +234,9 @@ function HeroSection() {
           style={{ animationDelay: '0.85s' }}
         >
           <p className="max-w-md text-[15px] leading-relaxed text-white/75 sm:text-base">
-            Portale is a relocation card designed for people starting life abroad. Open
-            remotely, spend instantly, exchange currencies fairly, and arrive already
-            connected.
+            An AI agent handed a wallet loses it to one prompt injection. GiwaCard gives
+            it a single-use card instead — a cap, one merchant, an expiry, all enforced by
+            the contract. Anything past those limits stops and waits for you.
           </p>
         </div>
       </div>
@@ -264,7 +277,7 @@ function CardSection({
           className="font-medium uppercase text-white/[0.04]"
           style={{ fontSize: 'clamp(4rem, 15vw, 14rem)', letterSpacing: '-0.02em' }}
         >
-          INFINITE
+          GIWACARD
         </span>
       </div>
 
@@ -285,7 +298,7 @@ function CardSection({
           className={staggerClass('font-light text-[#18161B]')}
           style={{ ...h2Style, animationDelay: '0.15s' }}
         >
-          Instantly Active
+          Spend Once
         </h2>
         <div
           className={staggerClass(
@@ -294,25 +307,31 @@ function CardSection({
           style={{ animationDelay: '0.3s' }}
         >
           <Plus size={15} />
-          More
+          One-time authorization
         </div>
       </div>
 
       <div className="absolute inset-x-0 bottom-0 flex flex-col gap-8 px-5 pb-10 sm:px-10 sm:pb-14 md:flex-row md:items-end md:justify-between md:px-14 md:pb-16">
         <div className={staggerClass('max-w-md')} style={{ animationDelay: '0.7s' }}>
           <p className="text-[15px] leading-relaxed text-[#18161B]/75 sm:text-base">
-            Get approved in seconds, receive your virtual card instantly, and arrive with
-            cashback, travel perks, and spending insights already active.
+            The cap is escrowed at mint, so a card can never spend more than it was given.
+            The merchant charges it once, the card dies, and whatever went unspent is
+            yours again immediately. Nothing here is enforced by a prompt.
           </p>
-          <button className="mt-6 rounded-full bg-[#18161B] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[#18161B]/90">
-            Apply now for free
-          </button>
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-6 inline-block rounded-full bg-[#18161B] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[#18161B]/90"
+          >
+            Get started
+          </a>
         </div>
         <h2
           className={staggerClass('font-light text-[#18161B] md:text-right')}
           style={{ ...h2Style, animationDelay: '0.5s' }}
         >
-          Before You Swipe
+          Then It Is Dead
         </h2>
       </div>
     </section>
@@ -355,7 +374,7 @@ function Nav({
               href="#"
               onClick={(e) => e.preventDefault()}
               className={`py-3 text-lg transition-all duration-400 ${
-                item === 'Card' ? 'text-white' : 'text-white/70'
+                item === 'Product' ? 'text-white' : 'text-white/70'
               } ${menuOpen ? 'translate-y-0 opacity-100' : 'translate-y-3 opacity-0'}`}
               style={{
                 transitionDelay: menuOpen ? `${80 + i * 40}ms` : '0ms',
@@ -404,7 +423,7 @@ function Nav({
               d ? 'text-[#18161B]' : 'text-white'
             }`}
           >
-            INFINITE
+            GIWACARD
           </span>
         </div>
 
@@ -419,7 +438,7 @@ function Nav({
               href="#"
               onClick={(e) => e.preventDefault()}
               className={`rounded-full px-4 py-2 text-sm transition-colors duration-500 ${
-                item === 'Card'
+                item === 'Product'
                   ? d
                     ? 'bg-[#18161B] text-white'
                     : 'bg-white text-gray-900'
@@ -568,7 +587,7 @@ export default function App() {
           videoPhase !== 'idle' ? 'pointer-events-none opacity-0' : 'opacity-100'
         }`}
       >
-        <HeroSection />
+        <HeroSection onSeeHow={startVideo} />
       </div>
 
       <Nav

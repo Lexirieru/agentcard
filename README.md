@@ -359,7 +359,6 @@ API and dashboard all built and tested; 960 tests passing.
   nobody has walked it yet.
 - `giwacard` is **not published to npm**. Install from the repo per
   [`llms-install.md`](./giwacard/llms-install.md).
-- The landing page still sells a different product — see [`landingpage/CLAUDE.md`](./landingpage/CLAUDE.md).
 
 **Next:** B2B multi-tenant issuing · gas sponsorship via a paymaster · deeper `up.id` identity
 integration · GIWA Wallet embedding · mainnet when GIWA ships it.

@@ -9,11 +9,12 @@ bun run dev
 
 ## Read this before editing
 
-**This page is not about GiwaCard yet.** It is a faithful recreation of an
-"Infinite / Portale" premium credit-card landing — the copy talks about
-relocation and starting life abroad, and none of it describes this product. It
-was built to an exact external spec, and adapting the content to GiwaCard is
-still an open task. Do not assume the wording is a product decision.
+**The copy is GiwaCard's, the visual machinery is inherited.** The page was
+originally built to an external "Infinite / Portale" credit-card spec; the copy has
+since been rewritten for this product, but the scroll machine, the spotlight, the
+remote imagery and the video are all still that original build. If something reads
+oddly, check whether it is copy (ours, change freely) or mechanics (recreated to a
+spec, change deliberately).
 
 **What it *is* load-bearing for:** the dashboard's visual language is derived
 from here (KTD-18) — the `#F4F0ED` canvas, `#18161B` ink, `#0A0B11` night, the

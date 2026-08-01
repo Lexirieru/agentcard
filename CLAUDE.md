@@ -16,7 +16,7 @@ one before working there; this file only carries what crosses boundaries.
 | `giwacard/` | The only published npm package: CLI, MCP server, approval daemon, agent skill. |
 | `merchant/` | Demo paid API + x402 facilitator. Operator-run, not published. |
 | `frontend/` | Next.js owner dashboard. Reown AppKit for wallet. |
-| `landingpage/` | Vite marketing page. Source of the shared visual language — **its copy is not about GiwaCard yet**. |
+| `landingpage/` | Vite marketing page. Source of the shared visual language. |
 | `docs/` | `brainstorms/` (product contract), `plans/` (implementation plan), `grant/` (GASOK application). |
 | `references/` | Local study material, gitignored. Not part of the build. |
 
@@ -31,8 +31,6 @@ State this accurately; several of these look finished from the code alone.
 - **`giwacard` is not published to npm.** The name is free but unreserved, and
   the version is still `0.0.1`. `npx giwacard` does not resolve; install from the
   repo per `giwacard/llms-install.md`.
-- **The landing page still sells a different product.** See
-  `landingpage/CLAUDE.md`.
 - **The grant application has ~58 unfilled placeholders.** See `docs/CLAUDE.md`.
 - **The demo has a script but no recording.** `docs/demo.md` has never been
   executed against the live testnet.
