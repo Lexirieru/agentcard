@@ -5,31 +5,21 @@ program: GASOK — GIWA Accelerator for Sustainable On-chain Kernel
 program_url: https://giwa.io/gasok
 tracks: AI/WEB3 (primary), GIWA-NATIVE IDEAS (secondary)
 date: 2026-08-01
-status: DRAFT — belum disubmit / not submitted
+status: DRAFT — not submitted
 origin: docs/plans/2026-08-01-001-feat-giwacard-mvp-plan.md (U12), docs/brainstorms/2026-08-01-giwa-agent-card-requirements.md
 ---
 
-# GiwaCard — Materi Aplikasi GASOK / GASOK Application Material
+# GiwaCard — GASOK Application Material
 
-## Cara memakai dokumen ini / How to use this document
+## How to use this document
 
-**ID.** Dokumen ini adalah draf jawaban untuk form aplikasi GASOK. Setiap seksi ditulis dua kali dan paralel: versi Bahasa Indonesia (`#### ID`) lebih dulu, lalu versi Bahasa Inggris (`#### EN`). Versi Inggris adalah teks yang dimaksudkan untuk disubmit; versi Indonesia ada agar pemohon dapat meninjau dan menyunting isinya dengan tepat. Placeholder ditulis `[ISI: ...]` di bagian Indonesia dan `[FILL: ...]` di bagian Inggris — **dokumen ini tidak boleh disubmit selama masih ada placeholder yang tersisa.** Semua angka pencapaian, ukuran tim, dan traksi sengaja dikosongkan, bukan dikarang. Daftar lengkap hal yang harus diisi pemohon ada di Seksi 9.
+This document is a draft of the answers for the GASOK application form. It is English-only, and its text is what is intended for submission. Anything the applicant still has to supply is marked `[FILL: ...]` — **this document must not be submitted while any placeholder remains.** All achievement figures, team size, and traction numbers are deliberately left blank rather than invented. The full list of what the applicant must supply is in Section 9.
 
-**EN.** This document is a draft of the answers for the GASOK application form. Every section appears twice and in parallel: the Indonesian version (`#### ID`) first, then the English version (`#### EN`). The English text is what is intended for submission; the Indonesian text exists so the applicant can review and edit the substance accurately. Placeholders are written `[ISI: ...]` in the Indonesian half and `[FILL: ...]` in the English half — **this document must not be submitted while any placeholder remains.** All achievement figures, team size, and traction numbers are deliberately left blank rather than invented. The full list of what the applicant must supply is in Section 9.
-
-**Catatan status aplikasi / Application status note.** Tenggat aplikasi yang diperpanjang adalah 31 Juli 2026 dan sudah lewat per 1 Agustus 2026. Halaman program tidak menyatakan pendaftaran ditutup dan menyebutkan bahwa aplikasi baru masih diterima selama Phase 2. Seksi 8 memuat permintaan konfirmasi kelayakan secara eksplisit. / The extended application deadline was 31 July 2026 and has lapsed as of 1 August 2026. The program page does not state that applications are closed and does state that new applications are accepted during Phase 2. Section 8 contains an explicit request to confirm eligibility.
+**Application status note.** The extended application deadline was 31 July 2026 and has lapsed as of 1 August 2026. The program page does not state that applications are closed and does state that new applications are accepted during Phase 2. Section 8 contains an explicit request to confirm eligibility.
 
 ---
 
-## 1. Ringkasan satu kalimat dan elevator pitch / One-liner and elevator pitch
-
-#### ID
-
-**Satu kalimat.** GiwaCard adalah rel pembayaran nonkustodial (*non-custodial*) untuk AI agent di GIWA: kartu belanja sekali-pakai onchain dengan batas nominal, cakupan merchant, dan masa berlaku yang ditegakkan oleh *smart contract*, bukan oleh prompt.
-
-**Elevator pitch.** AI agent semakin sering diberi tugas yang berujung pada pembayaran — memanggil API berbayar, membeli data, menyewa komputasi. Satu-satunya cara agent bisa membayar hari ini adalah diberi akses ke dompet, dan itu berarti satu kesalahan model atau satu *prompt injection* cukup untuk menguras seluruh saldo. GiwaCard menghapus pilihan itu. Pemilik dana menyetor ke *vault* miliknya sendiri di GIWA, memberi agent sebuah kunci sesi dengan *policy* (batas per kartu, batas harian, daftar merchant yang diizinkan, masa berlaku maksimum), lalu agent mencetak kartu sekali-pakai untuk setiap pembayaran. Kartu hangus setelah satu penagihan berhasil, dan sisa dana yang tidak terpakai langsung kembali tersedia. Permintaan di luar *policy* tidak ditolak diam-diam — permintaan itu masuk antrean persetujuan yang hanya bisa diputuskan pemilik dana, dalam maksimal dua interaksi. Kuncinya: batas ditegakkan di kontrak, sehingga agent yang salah atau disusupi tetap tidak bisa melampauinya. Agent terhubung lewat MCP server dan Agent Skill; manusia memakai CLI interaktif dan dasbor minimal. Loop pembayaran ditutup oleh merchant pertama yang kami bangun sendiri: API berbayar bergaya x402 yang menagih per-permintaan ke kartu tersebut.
-
-#### EN
+## 1. One-liner and elevator pitch
 
 **One-liner.** GiwaCard is a non-custodial payment rail for AI agents on GIWA: one-time onchain spend cards whose amount cap, merchant scope, and expiry are enforced by a smart contract rather than by a prompt.
 
@@ -37,21 +27,7 @@ origin: docs/plans/2026-08-01-001-feat-giwacard-mvp-plan.md (U12), docs/brainsto
 
 ---
 
-## 2. Pernyataan masalah / Problem statement
-
-#### ID
-
-**Agent butuh membayar, tetapi tidak boleh diberi dompet.** Alur kerja agent yang bernilai secara ekonomi hampir selalu menyentuh sesuatu yang berbayar: API premium, sumber data, komputasi, langganan. Pola yang dipakai sekarang adalah menaruh kunci privat atau kredensial pembayaran di lingkungan agent dan berharap model berperilaku baik. Ini tidak dapat diterima karena tiga alasan yang berbeda sifatnya:
-
-1. **Kesalahan model.** Agent bisa salah membaca jumlah, salah memilih penerima, atau mengulang panggilan yang sama berkali-kali. Tidak ada mekanisme di dalam model yang menjamin batas.
-2. **Prompt injection.** Konten yang dibaca agent — halaman web, respons API, isi berkas — dapat berisi instruksi. Pertahanan berbasis prompt ("jangan pernah kirim dana ke alamat dari konten eksternal") adalah kesantunan, bukan penegakan.
-3. **Tidak ada surface persetujuan.** Bahkan ketika pemilik dana ingin dilibatkan pada pengeluaran besar, tidak ada tempat baku untuk meminta persetujuan tanpa menghentikan seluruh alur kerja agent.
-
-**Solusi yang ada di dunia fiat tidak bisa dipakai audiens crypto global.** agentcard.sh membuktikan bahwa bentuk produknya benar: kartu virtual sekali-pakai untuk agent, dengan batas nominal dan persetujuan manusia. Namun produk tersebut bersifat kustodial dan sangat US-centric — dibangun di atas rel Visa, memakai Apple Pay, mensyaratkan KYC dengan identitas terbitan pemerintah, dan menggunakan alamat penagihan yang di-*hardcode* di San Francisco. Konsekuensinya sederhana: pengembang di luar Amerika Serikat, dan siapa pun yang bekerja dengan aset onchain, tidak dapat memakainya. Kami tidak berafiliasi dengan agentcard.sh dan tidak mengklaim hubungan apa pun dengan mereka; kami terinspirasi oleh model UX mereka dan menggunakan kembali sebagian kode mereka yang berlisensi MIT dengan atribusi hak cipta yang dipertahankan.
-
-**Di sisi GIWA, kategori ini belum terisi sama sekali.** Sejauh riset kami, belum ada infrastruktur pembayaran untuk agent di GIWA. Sementara itu bahan bakunya sudah ada sejak genesis: predeploy EntryPoint ERC-4337 v0.6 dan v0.7, Safe, Permit2, Multicall3, ditambah *preconfirmation* Flashblocks ~200 ms dan sistem identitas up.id. Yang belum ada adalah lapisan yang mengubah bahan itu menjadi produk yang bisa dipakai agent.
-
-#### EN
+## 2. Problem statement
 
 **Agents need to pay, but must not be handed a wallet.** Economically meaningful agent workflows almost always touch something paid: premium APIs, data sources, compute, subscriptions. The current pattern is to place a private key or payment credential in the agent's environment and hope the model behaves. That is unacceptable for three distinct reasons:
 
@@ -65,29 +41,7 @@ origin: docs/plans/2026-08-01-001-feat-giwacard-mvp-plan.md (U12), docs/brainsto
 
 ---
 
-## 3. Solusi / Solution
-
-#### ID
-
-GiwaCard terdiri dari empat lapisan yang semuanya dapat diperiksa secara publik.
-
-**Lapisan onchain (Solidity, Foundry, UUPS upgradeable, terverifikasi di Blockscout).**
-
-- `CardVault` — satu instans kanonik multi-owner. Saldo, escrow, kunci sesi, dan *policy* di-*key* berdasarkan alamat pemilik dana, sehingga pengguna baru cukup melampirkan diri ke vault yang sudah ada, tanpa deploy dan verifikasi kontrak per pengguna.
-- **Kartu = otorisasi belanja sekali-pakai onchain.** Mencetak kartu adalah transaksi yang mendaftarkan kartu dengan `cap`, token, `merchantScope`, dan `expiry`, lalu mengunci `cap` ke dalam escrow. Status kartu (`Active` / `Used` / `Expired` / `Revoked`) itu sendiri yang memberi proteksi terhadap *replay*: penagihan kedua pada kartu yang sama ditolak di level kontrak.
-- **Escrow dengan akumulator tunggal.** `availableBalance = balance − escrowedTotal`. Kartu yang hangus — terpakai, kedaluwarsa, atau dibatalkan — melepaskan sisa escrow kembali ke saldo tersedia tanpa aksi pemilik dana.
-- **Policy kunci sesi.** Kunci sesi agent terdaftar di vault dengan `capPerCard`, `dailyCap`, `merchantAllowlist`, dan `maxExpiry`. Semua dievaluasi di kontrak saat pencetakan. Pemilik dana dapat mencabut kunci sesi kapan saja.
-- **Jalur persetujuan.** Permintaan di luar *policy* tidak mencetak apa pun. Permintaan itu masuk antrean; pemilik dana menandatangani struct kartu EIP-712 dan mencetak kartu itu sendiri. `approvalId` bersifat sekali-pakai. Antrean punya TTL sehingga permintaan yang tidak diputuskan berakhir di status terminal yang deterministik tanpa dana bergerak.
-
-**Lapisan agent.** MCP server berjalan lokal lewat stdio (`npx giwacard mcp`), mengekspos alat: cetak kartu, lihat status kartu, batalkan kartu, baca saldo, baca *policy*, cek status persetujuan. **Alat untuk menyelesaikan persetujuan sengaja tidak pernah tersedia lewat MCP** — hanya pemilik dana yang bisa, lewat CLI atau dasbor. Kunci sesi tidak pernah meninggalkan mesin pemilik dana dan hasil alat diredaksi dua lapis, sehingga agent hanya melihat `card_id` yang opaque dan tidak pernah menerima material yang bisa ditandatangani. Agent Skill mendokumentasikan kosakata, alur kerja, aturan keselamatan, dan tabel kesalahan yang dapat ditindaklanjuti.
-
-**Lapisan manusia.** CLI interaktif satu perintah (`npx giwacard`) menjalankan *wizard* onboarding lengkap: buat atau impor dompet, lampirkan ke vault, klaim faucet, buat kunci sesi, tetapkan *policy*, tulis konfigurasi MCP ke agent. Dasbor web minimal menampilkan saldo, kartu aktif dan hangus, antrean persetujuan, dan riwayat transaksi yang dibangun dari event vault. Kemampuan inti tersedia setara di kedua jalur.
-
-**Lapisan merchant.** Merchant pertama kami bangun sendiri agar demo menghasilkan nilai nyata, bukan toko simulasi: sebuah API berbayar bergaya x402 ("GIWA Insights", laporan analitik chain yang dihasilkan on-demand) yang menagih per-permintaan. Alurnya: merchant menjawab `402` dengan syarat pembayaran, MCP server menyubmit `CardVault.charge`, lalu mengirim header `X-PAYMENT` berisi hash transaksi dan `cardId`; fasilitator memverifikasi bahwa event `Charged` yang cocok benar-benar ada di alamat vault, jumlah, dan merchant yang benar, lalu mengembalikan `200`. Fasilitator hanya membaca chain, jadi tidak memerlukan EOA berdana.
-
-**Stablecoin uji.** Karena tidak ada test-USDC kanonik di GIWA Sepolia, kami men-deploy `gUSD` (6 desimal, UUPS) lengkap dengan faucet onchain.
-
-#### EN
+## 3. Solution
 
 GiwaCard has four layers, all of which are publicly inspectable.
 
@@ -109,25 +63,9 @@ GiwaCard has four layers, all of which are publicly inspectable.
 
 ---
 
-## 4. Pemetaan ke enam kriteria seleksi Phase 1 / Mapping to the six Phase 1 selection criteria
+## 4. Mapping to the six Phase 1 selection criteria
 
-### 4.1 Kecocokan dengan chain GIWA (GIWA 체인 적합성) / Fit with the GIWA chain
-
-#### ID
-
-**Flashblocks membuat persetujuan terasa instan, dan itu bukan kosmetik.** Ketika agent membayar di tengah alur kerja, agent tersebut *terblokir* menunggu konfirmasi. Pada Ethereum L1 dengan interval blok 12 detik, jeda itu cukup untuk memaksa perancangan asinkron di seluruh produk. GIWA memberi interval blok 1 detik dan *preconfirmation* Flashblocks ~200 ms — cukup cepat untuk memperlakukan pembayaran sebagai pemanggilan sinkron. Kami membaca state ter-*preconfirm* untuk memberi rasa instan pada CLI, dasbor, dan alur MCP, sambil tetap memperlakukan state onchain sebagai satu-satunya kebenaran untuk status kartu; UI menandai transaksi sebagai *pending* sampai blok aman. Ini adalah kasus penggunaan yang secara khusus diuntungkan oleh properti GIWA, bukan sekadar aplikasi yang kebetulan di-deploy di sana.
-
-**Kami membangun di atas predeploy genesis, bukan menduplikasinya.** Permit2, Safe, Multicall3, dan EntryPoint ERC-4337 v0.6 dan v0.7 sudah ada sejak genesis. Multicall3 dipakai untuk membaca state kartu dan saldo secara batch di dasbor. EntryPoint dan Safe menjadi jalur kompatibilitas akun tanpa kami perlu men-deploy infrastruktur akun sendiri. Kami menyampaikan satu hal secara jujur: MVP sengaja tidak bergantung pada *bundler* atau *paymaster*, karena GIWA belum menyediakannya secara resmi; kompatibilitas ERC-4337 penuh adalah item peta jalan, bukan klaim hari ini. Kami memilih tidak memakai Permit2 untuk *settlement* karena alasan teknis yang kami jelaskan di 4.2, dan mencatatnya sebagai jalur interoperabilitas.
-
-**EVM-equivalent berarti tidak ada pajak porting.** Karena GIWA adalah OP Stack dan EVM-equivalent, seluruh perkakas standar berlaku: Foundry untuk kontrak, viem dengan konfigurasi chain OP Stack untuk klien, Blockscout untuk verifikasi. Waktu tim habis untuk masalah produk, bukan untuk mengakali chain.
-
-**Jalur integrasi GIWA Wallet.** Surface persetujuan dirancang sejak awal sebagai komponen kecil dan mandiri agar dapat dipasang di dalam dompet. Argumen lengkapnya ada di 4.6.
-
-**up.id sebagai peta jalan identitas.** Upbit Web3 Names (`up.id`) bersifat terverifikasi KYC dan *soul-bound*. Untuk pembayaran agent, itu bukan sekadar nama yang enak dibaca: daftar merchant yang diizinkan dan permintaan persetujuan menjadi jauh lebih mudah dinilai manusia jika ditampilkan sebagai `merchant.up.id` alih-alih alamat heksadesimal, dan sifat *soul-bound* plus KYC menjadikannya primitif reputasi merchant yang berarti. Kami menyatakannya sebagai peta jalan, bukan fitur MVP.
-
-**Testnet-first mengikuti kondisi chain.** Mainnet GIWA masih dalam pengembangan, jadi target rilis kami adalah GIWA Sepolia (chain ID 91342) dengan peluncuran mainnet masuk peta jalan Phase 4 — sejalan dengan waktu chain itu sendiri, bukan mendahuluinya.
-
-#### EN
+### 4.1 Fit with the GIWA chain (GIWA 체인 적합성)
 
 **Flashblocks make approval feel instant, and that is not cosmetic.** When an agent pays mid-workflow, the agent is *blocked* waiting on confirmation. On Ethereum L1 with a 12-second block interval, that delay is long enough to force an asynchronous design across the whole product. GIWA gives a 1-second block interval and Flashblocks preconfirmations at ~200 ms — fast enough to treat a payment as a synchronous call. We read preconfirmed state to give the CLI, dashboard, and MCP flow their instant feel, while still treating onchain state as the single source of truth for card status; the UI marks transactions as pending until the safe block. This is a use case that specifically benefits from GIWA's properties, not an application that merely happens to be deployed there.
 
@@ -143,21 +81,7 @@ GiwaCard has four layers, all of which are publicly inspectable.
 
 ---
 
-### 4.2 Orisinalitas (독창성) / Originality
-
-#### ID
-
-**Kategori ini belum ada di GIWA.** Sejauh riset kami, GiwaCard akan menjadi infrastruktur pembayaran agent pertama di GIWA. Kami tidak memindahkan aplikasi yang sudah jalan di chain lain; produk ini dirancang untuk properti GIWA.
-
-**Lapisan onchain adalah pekerjaan baru, bukan porting.** Tiga bagian yang kami tulis dari nol:
-
-1. **Vault escrow dengan akumulator tunggal.** Escrow dikunci saat pencetakan sehingga saldo tersedia selalu mencerminkan komitmen belanja yang sudah dijanjikan ke kartu aktif, dengan biaya gas yang konstan — bukan hasil penjumlahan seluruh kartu aktif, yang gasnya tidak terbatas. Pelepasan escrow untuk kartu kedaluwarsa bersifat *permissionless* karena EVM tidak punya eksekusi berbasis waktu; "otomatis" di sini berarti tanpa aksi pemilik dana, bukan tanpa transaksi. Kami menyatakan batasan itu apa adanya.
-2. **Otorisasi kartu sekali-pakai.** Bukan *allowance* berulang. Setiap kartu punya cakupan merchant, batas nominal, dan masa berlaku sendiri, dan hangus setelah satu penagihan. Ini berbeda dari prior art terdekat yang kami pelajari: Coinbase spend-permissions dan Safe Allowance Module keduanya memberi *spender* tunjangan berulang dalam jendela waktu. Model kartu lebih ketat, dan lebih cocok untuk agent karena kebocoran satu kredensial kartu tidak memberi apa-apa selain satu pembayaran yang sudah dibatasi cakupannya.
-3. **Settlement x402 yang diverifikasi terhadap event vault.** Skema x402 `exact_evm` yang umum menyelesaikan pembayaran dengan menarik token dari saldo penanda tangan lewat tanda tangan. Pada model kami itu tidak mungkin: dana berada di escrow di dalam vault, dan kunci sesi tidak memegang token sama sekali. Karena itu kami memakai bentuk settlement yang berbeda — penagihan dilakukan oleh vault, dan fasilitator memverifikasi *event* `Charged` yang cocok pada alamat vault, jumlah, merchant, dan `cardId`. Fasilitator menjadi *read-only* dan tidak butuh EOA berdana. Sepengetahuan kami ini adalah bentuk settlement x402 yang belum umum, dan lahir dari kebutuhan spesifik belanja terdelegasi.
-
-**Apa yang kami gunakan kembali, dinyatakan tepat.** Kami menggunakan kembali kode berlisensi MIT dari repositori publik agentcard.sh — permukaan alat MCP, Agent Skill, dan utilitas redaksi — dengan pemberitahuan hak cipta dipertahankan di berkas `NOTICE`. Kami terinspirasi oleh model UX mereka. Kami **tidak** berafiliasi dengan mereka dan tidak mengklaim dukungan, kemitraan, atau hubungan akselerator apa pun. Seluruh lapisan onchain, model escrow, mekanisme kartu, dan skema settlement adalah pekerjaan kami sendiri.
-
-#### EN
+### 4.2 Originality (독창성)
 
 **The category does not exist on GIWA yet.** As far as our research shows, GiwaCard would be the first agent payment infrastructure on GIWA. We are not relocating an application that already runs on another chain; this product is designed for GIWA's properties.
 
@@ -171,45 +95,14 @@ GiwaCard has four layers, all of which are publicly inspectable.
 
 ---
 
-### 4.3 Kelayakan pelaksanaan (실현 가능성) / Feasibility
-
-#### ID
-
-**Bukti yang kami ajukan adalah artefak yang bisa diperiksa, bukan janji.** Tonggak bukti untuk aplikasi ini adalah:
-
-- `gUSD` dan `CardVault` ter-deploy di GIWA Sepolia dan **terverifikasi** di `sepolia-explorer.giwa.io` (implementasi dan proxy), sehingga reviewer dapat membaca kode sumber dan memanggil fungsi baca langsung dari explorer.
-  Alamat: `[ISI: alamat CardVault]`, `[ISI: alamat gUSD]`, terverifikasi pada `[ISI: tanggal]`.
-- **Jalur pembayaran agent yang sudah berjalan**: agent meminta kartu → kartu tercetak dengan escrow → penagihan berhasil ke API berbayar → laporan dikembalikan → kartu hangus dan sisa escrow lepas. Transaksi contoh: `[ISI: tautan tx mint]`, `[ISI: tautan tx charge]`.
-
-**Kami tidak mengklaim MVP sudah selesai.** Per tanggal aplikasi ini, komponen yang belum rampung adalah `[ISI: komponen yang masih dikerjakan — mis. dasbor, wizard CLI, publikasi npm]`. Kami menyebutkannya secara eksplisit karena klaim kesiapan yang tidak dapat diverifikasi akan merusak kredibilitas seluruh aplikasi.
-
-**Mengapa lingkupnya realistis.** Keputusan arsitektur kami secara sengaja menghapus ketergantungan yang paling sering membunuh jadwal:
-
-- **Tanpa kustodi.** Dana tetap di vault pemilik. Tidak ada penyimpanan saldo pengguna, tidak ada kewajiban rekonsiliasi, dan pada tahap testnet tidak ada permukaan KYC atau kepatuhan.
-- **Tanpa bundler dan paymaster.** Pencetakan dan penagihan adalah transaksi biasa dari EOA yang jelas identitasnya. Tidak ada ketergantungan pada infrastruktur ERC-4337 yang belum tersedia di GIWA.
-- **Tanpa rel fiat.** Tidak ada jaringan kartu, tidak ada penyedia pembayaran, tidak ada perjanjian pihak ketiga yang harus ditunggu.
-- **Satu tumpukan teknologi.** Kontrak dengan Foundry/Solidity; seluruh komponen lain TypeScript dalam satu paket yang dipublikasikan (`giwacard`) yang memuat CLI, MCP server, skill, dan daemon antrean persetujuan.
-- **Satu vault kanonik.** Pengguna baru melampirkan diri, bukan men-deploy. Tidak ada beban deploy dan verifikasi per pengguna.
-
-**Risiko yang kami ketahui dan mitigasinya.** Kami menyebutkannya lebih dulu agar reviewer tahu kami sudah mengukurnya:
-
-| Risiko | Mitigasi |
-|---|---|
-| RPC publik GIWA Sepolia *rate-limited* dan dinyatakan hanya untuk pengembangan | Retry dengan *backoff* di semua klien; RPC cadangan disiapkan khusus untuk demo; latihan demo di jam sepi |
-| Faucet ETH dibatasi 0,005–0,01 ETH per 24 jam | Anggaran gas dihitung di muka dan ditampilkan wizard per alamat penyubmit; volume mint+charge untuk demo jauh di bawah batas itu pada gas L2; ETH dikumpulkan beberapa hari sebelum demo |
-| Verifikasi Blockscout pada OP Stack diketahui rapuh | Fallback verifikasi manual dengan *standard JSON input* melalui UI explorer; hasil verifikasi dicatat di README |
-| Mainnet GIWA belum tersedia | Rilis diarahkan ke testnet; peluncuran mainnet masuk Phase 4 dan mengikuti jadwal chain |
-| Basefee L1 Sepolia melonjak menaikkan biaya data | Cadangan ETH lebih dari kebutuhan nominal; anggaran diuji ulang mendekati demo |
-
-**Kapasitas tim** dijelaskan di 4.5 dan wajib diisi pemohon sebelum submit.
-
-#### EN
+### 4.3 Feasibility (실현 가능성)
 
 **The evidence we submit is inspectable artifacts, not promises.** The evidence milestone for this application is:
 
-- `gUSD` and `CardVault` deployed on GIWA Sepolia and **verified** on `sepolia-explorer.giwa.io` (implementation and proxy), so a reviewer can read the source and call read functions directly from the explorer.
-  Addresses: `[FILL: CardVault address]`, `[FILL: gUSD address]`, verified on `[FILL: date]`.
-- **A working agent payment path**: agent requests a card → card is minted with escrow → charge succeeds against the paid API → report is returned → card goes void and the remaining escrow is released. Example transactions: `[FILL: mint tx link]`, `[FILL: charge tx link]`.
+- `gUSD` and `CardVault` deployed on GIWA Sepolia (chain ID 91342) and **verified** on `sepolia-explorer.giwa.io` (implementation and proxy), so a reviewer can read the source and call read functions directly from the explorer. Deployed and verified on 2 August 2026, solc 0.8.28:
+  - `CardVault` proxy [`0xD89395Df78aaFdF86b330899d1C6189211e88750`](https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750), implementation [`0x0D7766158f14ad7bB82d9FD8A47734e801E3F5B8`](https://sepolia-explorer.giwa.io/address/0x0D7766158f14ad7bB82d9FD8A47734e801E3F5B8)
+  - `gUSD` proxy [`0xADa0466303441102cb16F8Ec1594C744d603F746`](https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746), implementation [`0x29faf6cAFA4BeA1dC7c232f0a1818d4da6b724DD`](https://sepolia-explorer.giwa.io/address/0x29faf6cAFA4BeA1dC7c232f0a1818d4da6b724DD)
+- **An agent payment path that is built and tested, but not yet exercised end to end on the live chain.** The path is: agent requests a card → card is minted with escrow → the merchant charges it against the paid API → the report is returned → the card goes void and the remaining escrow is released. Every step of it is covered by the test suite (960 tests across the four packages), and the contracts it runs against are deployed and verified. What we cannot yet show you is a transaction trace of the whole loop on GIWA Sepolia, because we have not run it there yet. We would rather say so than describe a rehearsal as a performance. Once it is run: `[FILL: mint tx link]`, `[FILL: charge tx link]`.
 
 **We do not claim a finished MVP.** As of the date of this application, the components not yet complete are `[FILL: components still in progress — e.g. dashboard, CLI wizard, npm publication]`. We say so explicitly, because an unverifiable readiness claim would undermine the credibility of the entire application.
 
@@ -235,24 +128,7 @@ GiwaCard has four layers, all of which are publicly inspectable.
 
 ---
 
-### 4.4 Pasar (시장성) / Market demand and growth
-
-#### ID
-
-**Permintaan datang dari pertumbuhan perkakas agent, bukan dari spekulasi.** Agent koding dan agent otonom kini rutin dipasang di alur kerja produksi lewat MCP dan sistem *skill*. Semakin agent dipercaya menyelesaikan tugas tanpa pengawasan langkah-demi-langkah, semakin sering tugas itu berujung pada sesuatu yang berbayar. Kebutuhannya bukan "biarkan agent membelanjakan uang" — kebutuhannya adalah "biarkan agent membelanjakan sejumlah tertentu, ke tempat tertentu, sekali saja".
-
-**Bukti permintaan kategori dari pihak yang tidak berafiliasi dengan kami.** Testimoni publik agentcard.sh berulang pada satu tema: batas belanja yang bercakupan sempit adalah hal yang membuat alur kerja otonom aman dijalankan tanpa ditunggui. Kami mengutip tema itu sebagai bukti bahwa kategorinya punya permintaan nyata dari pengguna yang membayar, bukan sebagai klaim hubungan apa pun dengan perusahaan tersebut — kami tidak berafiliasi dengan mereka.
-
-**Dua sisi permintaan yang berbeda.**
-
-- **Pengembang agent** menginginkan rel yang bisa diberi batas, bukan dompet yang harus dipercaya. Bagi mereka nilai GiwaCard adalah pengurangan risiko yang bisa diaudit: batas ada di kontrak, dan hilangnya kredensial kartu bernilai nol.
-- **Operator API dan merchant** menginginkan endpoint yang bisa dibayar mesin tanpa membangun penagihan, langganan, dan akun pengguna. Pola x402 memberi itu; yang kurang adalah sisi pembayar yang aman didelegasikan ke agent. GiwaCard adalah sisi pembayar itu.
-
-**Mengapa harus rel crypto, dan mengapa itu peluang khusus GIWA.** Penerbitan kartu fiat terikat yurisdiksi: KYC identitas terbitan pemerintah, alamat penagihan, aturan jaringan kartu. Itulah sebabnya solusi yang ada tidak dapat melayani pengembang di luar Amerika Serikat. Kartu onchain tidak punya gerbang itu — global sejak hari pertama, dan dapat dipakai siapa pun yang punya dompet. Bagi GIWA, ini adalah kategori aplikasi yang mendatangkan transaksi bervolume tinggi dan bernilai kecil, persis jenis lalu lintas yang diuntungkan oleh blok 1 detik dan *preconfirmation* ~200 ms.
-
-**Batas kejujuran.** Kami belum punya pengguna, pendapatan, atau traksi. Argumen pasar di atas bersifat kualitatif dan struktural. Jika reviewer menghendaki angka ukuran pasar, kami akan menyertakannya hanya dengan sumber yang dapat dikutip: `[ISI: angka ukuran pasar beserta sumbernya, jika pemohon ingin menyertakannya]`.
-
-#### EN
+### 4.4 Market demand and growth (시장성)
 
 **Demand comes from the growth of agent tooling, not from speculation.** Coding agents and autonomous agents are now routinely installed into production workflows through MCP and skill systems. The more an agent is trusted to complete a task without step-by-step supervision, the more often that task ends in something paid. The need is not "let agents spend money" — it is "let an agent spend this much, at this place, once."
 
@@ -269,31 +145,7 @@ GiwaCard has four layers, all of which are publicly inspectable.
 
 ---
 
-### 4.5 Kapasitas tim (팀 구성 역량) / Team capability
-
-#### ID
-
-> **PERINGATAN: SELURUH SUBSEKSI INI ADALAH PLACEHOLDER DAN HARUS DIISI PEMOHON SECARA PRIBADI.**
-> Tidak ada nama, peran, riwayat, atau pencapaian yang dikarang di sini. Jangan submit dalam keadaan ini.
-
-**Komposisi tim.**
-
-| Nama | Peran | Komitmen waktu | Lokasi / zona waktu | GitHub / X | Pekerjaan relevan yang pernah dirilis |
-|---|---|---|---|---|---|
-| `[ISI: nama]` | `[ISI: peran, mis. kontrak, TypeScript, produk]` | `[ISI: penuh waktu / paruh waktu, jam per minggu]` | `[ISI]` | `[ISI: tautan]` | `[ISI: nama proyek, tautan, apa yang dikerjakan]` |
-| `[ISI: tambah baris sesuai jumlah anggota]` | | | | | |
-
-**Ukuran tim:** `[ISI: jumlah anggota]`.
-
-**Mengapa tim ini mampu mengerjakan proyek ini:** `[ISI: 3–5 kalimat. Sebutkan hanya yang dapat diverifikasi — kontrak yang pernah di-deploy dan alamatnya, paket yang pernah dipublikasikan, produk yang pernah dirilis, pengalaman Solidity/TypeScript/MCP, hackathon yang pernah diikuti beserta hasilnya.]`
-
-**Bukti eksekusi pada proyek ini:** `[ISI: tautan repo publik]`, `[ISI: tautan commit atau riwayat kontribusi]`, `[ISI: alamat kontrak terverifikasi]`.
-
-**Kesenjangan yang kami sadari dan rencana menutupnya:** `[ISI: mis. desain UI, pengembangan bisnis, audit keamanan — dan bagaimana rencananya diatasi]`
-
-**Rencana rekrutmen jika terpilih:** `[ISI: peran yang akan ditambahkan, atau nyatakan tidak ada]`
-
-#### EN
+### 4.5 Team capability (팀 구성 역량)
 
 > **WARNING: THIS ENTIRE SUBSECTION IS A PLACEHOLDER AND MUST BE FILLED IN PERSONALLY BY THE APPLICANT.**
 > No names, roles, histories, or achievements are invented here. Do not submit in this state.
@@ -317,25 +169,7 @@ GiwaCard has four layers, all of which are publicly inspectable.
 
 ---
 
-### 4.6 Potensi tertanam di GIWA Wallet (GIWA 월렛 내 탑재 가능성) / Potential to be embedded in GIWA Wallet
-
-#### ID
-
-Ini bukan klaim yang kami tambahkan belakangan. Ini adalah batasan desain yang kami tetapkan sejak awal dan tercatat sebagai persyaratan produk.
-
-**Seluruh permukaan pemilik dana muat dalam satu layar.** Yang perlu ditampilkan sebuah dompet hanyalah satu kartu permintaan yang berisi: agent mana yang meminta (kunci sesi), jumlah dan token, alamat merchant, masa berlaku, alasan permintaan berada di luar *policy*, dan saldo tersedia setelah permintaan disetujui. Di bawahnya dua tombol: setujui atau tolak.
-
-**Maksimal dua interaksi.** Persyaratan produk kami menetapkan bahwa pemilik dana harus dapat menyetujui atau menolak dalam paling banyak dua interaksi. Persyaratan itu ada justru karena alur yang butuh lebih dari dua langkah tidak layak ditanam di dalam dompet.
-
-**Primitifnya sudah dimiliki dompet mana pun.** Menyetujui berarti menandatangani struct EIP-712 lalu mengirim satu transaksi. Tidak ada yang eksotis: tidak ada kustodi, tidak ada kunci milik kami di dalam dompet, tidak ada sesi jangka panjang yang harus dijaga dompet. Jika sebuah dompet sudah bisa menandatangani EIP-712 dan mengirim transaksi, ia sudah bisa menjalankan seluruh alur persetujuan GiwaCard.
-
-**Tanpa kebutuhan indexer.** Status kartu, saldo, dan escrow dibaca dari satu kontrak. Riwayat dibangun dari event vault. Dompet tidak perlu menjalankan atau berlangganan infrastruktur pengindeksan apa pun untuk menampilkan state yang benar.
-
-**Persetujuan terlepas dari sesi agent.** Antrean persetujuan tidak bergantung pada sesi agent yang masih hidup: pemilik dana boleh menyetujui satu jam kemudian, dan kartu tetap tercetak; agent menemukannya lewat pemeriksaan status yang *stateless*. Ini penting untuk dompet mobile, karena pengguna dompet tidak mungkin diharuskan menyetujui dalam hitungan detik sementara terminalnya menunggu.
-
-**Bentuk integrasi yang kami usulkan.** Sebuah tab "Agent Requests" di dalam GIWA Wallet yang menampilkan antrean permintaan; tautan dalam (*deep link*) dari CLI dan dasbor ke layar tersebut; dan, pada tahap berikutnya, penampilan agent peminta dan merchant dengan nama up.id alih-alih alamat heksadesimal. Kami bersedia menyesuaikan bentuknya dengan pedoman integrasi tim GIWA Wallet — permintaan kontak teknis untuk ini ada di Seksi 8.
-
-#### EN
+### 4.6 Potential to be embedded in GIWA Wallet (GIWA 월렛 내 탑재 가능성)
 
 This is not a claim added after the fact. It is a design constraint we set at the start and recorded as a product requirement.
 
@@ -353,19 +187,7 @@ This is not a claim added after the fact. It is a design constraint we set at th
 
 ---
 
-## 5. Alasan mendaftar dua track / Two-track application rationale
-
-#### ID
-
-Program mengizinkan pendaftaran di lebih dari satu track, dengan maksimum tiga tim per track. Kami mendaftar di dua.
-
-**AI/WEB3 — track utama.** Ini adalah identitas produk. GiwaCard bukan aplikasi yang kebetulan memakai AI; produk ini adalah infrastruktur yang keberadaannya hanya masuk akal karena agent otonom membelanjakan uang. Permukaan utamanya adalah MCP server dan Agent Skill, dan ancaman yang ditanganinya — kesalahan model dan *prompt injection* — adalah ancaman khas AI. Kalau agent tidak ada, produk ini tidak ada.
-
-**GIWA-NATIVE IDEAS — track sekunder.** Kami mendaftar di sini karena fitur GIWA yang kami pakai bersifat menopang, bukan hiasan. Flashblocks menentukan apakah pembayaran agent bisa dirancang sinkron; predeploy genesis menentukan berapa banyak infrastruktur yang tidak perlu kami bangun; jalur integrasi GIWA Wallet adalah bagian dari desain permukaan persetujuan sejak awal; up.id memberi jalur reputasi merchant yang tidak tersedia di chain lain. Ide ini lahir dari properti GIWA, dan tidak akan sama bentuknya jika dipindahkan ke chain lain.
-
-**Kami tidak mendaftar** di DEFI/RWA, CONSUMER/SOCIAL, atau MASS ADOPTION. Produk ini bukan protokol DeFi, bukan aplikasi konsumen, dan pada tahap ini menyasar pengembang, bukan pengguna massal. Mendaftar di sana akan menjadi klaim yang tidak jujur.
-
-#### EN
+## 5. Two-track application rationale
 
 The program allows applying to more than one track, with a maximum of three teams per track. We apply to two.
 
@@ -377,33 +199,13 @@ The program allows applying to more than one track, with a maximum of three team
 
 ---
 
-## 6. Peta jalan yang dipetakan ke fase program / Roadmap mapped to the program phases
-
-#### ID
-
-**Catatan waktu masuk.** Kami mendaftar setelah tenggat perpanjangan 31 Juli 2026, mengandalkan pernyataan halaman program bahwa aplikasi baru diterima selama Phase 2. Artinya kami masuk di tengah siklus dan Phase 2 kami memang lebih padat. Kami menyampaikan itu apa adanya, dan menyusun rencana untuk mengejar, bukan untuk memberi kesan sudah sejajar.
-
-| Fase program | Jadwal program | Yang kami kerjakan | Keluaran yang dapat diperiksa |
-|---|---|---|---|
-| Phase 1 — seleksi | Mei 2026 | Aplikasi ini; kontrak inti sudah ter-deploy dan terverifikasi di GIWA Sepolia; jalur pembayaran agent sudah berjalan | Alamat kontrak terverifikasi; transaksi mint dan charge di explorer; repo publik |
-| Phase 2 — bangun MVP | Jun–Jul 2026 | Selesaikan MVP: MCP server dan Agent Skill, wizard CLI, daemon antrean persetujuan, merchant API berbayar, stablecoin uji + faucet | `npx giwacard` menjalankan onboarding sampai kartu pertama; demo E2E berjalan tanpa intervensi selain persetujuan pemilik |
-| Phase 3 — produktisasi | Agu–Sep 2026 | Dasbor dengan kualitas UI/UX yang layak dipakai; onboarding coding agent di bawah 10 menit; publikasi paket npm; dokumentasi dua jalur (untuk manusia / untuk agent); pengguna awal dan umpan baliknya | Paket publik di registry; catatan hasil uji onboarding; jumlah pengguna awal beserta metodenya |
-| Demoday | Oktober 2026, Korea Blockchain Week | Demo langsung: agent membayar API berbayar di GIWA, persetujuan di luar *policy* diputuskan langsung di panggung, dan percobaan *prompt injection* yang tetap ditolak kontrak | Demo langsung + video + repo publik + paket terpasang dari registry dalam satu perintah |
-| Phase 4 — pertumbuhan | Setelah Demoday, digerakkan KPI | Penerbitan B2B multi-tenant (organisasi menerbitkan kartu untuk agent penggunanya); peluncuran mainnet saat mainnet GIWA tersedia; integrasi GIWA Wallet; up.id untuk merchant dan agent; kompatibilitas ERC-4337 memakai EntryPoint genesis; sponsor gas lewat paymaster | KPI di Seksi 7 |
-
-**Tiga item terbesar di Phase 4, secara ringkas.**
-
-- **Penerbitan B2B multi-tenant.** Hari ini satu pemilik dana mengelola agent-nya sendiri. Bentuk komersialnya adalah organisasi yang menerbitkan kartu bercakupan untuk agent milik penggunanya, dengan *policy* bertingkat dan pelaporan. Ini adalah perluasan dari model vault yang sama, bukan produk baru.
-- **Peluncuran mainnet.** Menunggu mainnet GIWA. Prasyarat yang sudah kami tetapkan sendiri: kepemilikan upgrade dipindahkan ke multisig dengan *timelock*, dan audit keamanan `[ISI: rencana audit — mandiri, hibah, atau lewat program]`.
-- **Integrasi GIWA Wallet.** Sesuai bentuk di 4.6, mengikuti pedoman tim GIWA Wallet.
-
-#### EN
+## 6. Roadmap mapped to the program phases
 
 **A note on our entry timing.** We are applying after the 31 July 2026 extended deadline, relying on the program page's statement that new applications are accepted during Phase 2. That means we enter mid-cycle and our Phase 2 is genuinely compressed. We state that plainly, and plan to catch up rather than to appear already level.
 
 | Program phase | Program schedule | What we do | Inspectable output |
 |---|---|---|---|
-| Phase 1 — screening | May 2026 | This application; core contracts already deployed and verified on GIWA Sepolia; agent payment path already working | Verified contract addresses; mint and charge transactions on the explorer; public repo |
+| Phase 1 — screening | May 2026 | This application; core contracts deployed and verified on GIWA Sepolia; the agent payment path built and covered by tests, pending its first live run | Verified contract addresses; the public repo and its test suite; mint and charge transactions on the explorer once the loop has been run |
 | Phase 2 — MVP build | Jun–Jul 2026 | Complete the MVP: MCP server and Agent Skill, CLI wizard, approval-queue daemon, paid merchant API, test stablecoin + faucet | `npx giwacard` runs onboarding through to the first card; E2E demo runs with no intervention beyond owner approval |
 | Phase 3 — productize | Aug–Sep 2026 | Dashboard at a UI/UX quality fit for real use; sub-10-minute coding-agent onboarding; npm package publication; two-path documentation (for humans / for agents); first users and their feedback | Public package in the registry; onboarding test records; first-user count with the counting method stated |
 | Demoday | October 2026, Korea Blockchain Week | Live demo: an agent pays a paid API on GIWA, an out-of-policy approval resolved live on stage, and a prompt-injection attempt that the contract still rejects | Live demo + video + public repo + one-command install from the registry |
@@ -417,37 +219,7 @@ The program allows applying to more than one track, with a maximum of three team
 
 ---
 
-## 7. Usulan KPI untuk tingkat bonus / KPI proposal for the bonus grant tier
-
-#### ID
-
-**Prinsip.** Bonus terikat pada volume transaksi, TVL, dan akuisisi pengguna. Kami menyampaikan satu hal secara langsung: selama mainnet GIWA belum tersedia, TVL dan volume transaksi bernilai uang nyata bukan metrik yang jujur untuk produk ini. Karena itu kami mengusulkan dua set KPI — set testnet yang berlaku sampai mainnet, dan set mainnet yang menggantikannya sejak hari peluncuran mainnet. Semua angka di bawah adalah **target yang kami usulkan dan siap dinegosiasikan**, bukan pencapaian. Kami belum punya pengguna.
-
-**Set A — sampai peluncuran mainnet GIWA.**
-
-| Metrik | Definisi tepat | Sumber pengukuran | Target yang diusulkan |
-|---|---|---|---|
-| Pembayaran yang diinisiasi agent | Jumlah event `Charged` yang sukses di `CardVault` | Log event onchain, dapat direproduksi siapa pun | `[ISI: mis. 1.000 dalam 90 hari setelah Demoday]` |
-| Dompet pemilik aktif | Alamat pemilik unik dengan ≥1 kartu tercetak dalam 30 hari berjalan | Event `Minted` onchain | `[ISI: mis. 50]` |
-| Vault terdanai | Alamat pemilik unik dengan saldo setoran > 0 | State onchain | `[ISI: mis. 100]` |
-| Host agent terintegrasi | Jumlah host MCP berbeda yang lolos runbook instalasi kami (mis. Claude Code, Cursor, Gemini CLI) | Catatan uji yang direproduksi ulang | `[ISI: mis. 3]` |
-| Endpoint merchant | Jumlah endpoint berbayar pihak ketiga yang menerima settlement GiwaCard | Daftar publik + tx verifikasi | `[ISI: mis. 3]` |
-| Unduhan paket | Unduhan mingguan `giwacard` di registry npm | Statistik registry publik | `[ISI: mis. 200/minggu]` |
-| Waktu onboarding | Waktu bagi coding agent yang belum pernah melihat proyek ini untuk mencapai kartu pertama | Uji onboarding terekam | < 10 menit |
-| Latensi permintaan-ke-respons | Waktu median dari permintaan agent sampai respons merchant, memanfaatkan *preconfirmation* | Instrumentasi klien, dilaporkan dengan distribusinya | `[ISI: mis. < 1,5 detik median]` |
-
-**Set B — berlaku sejak mainnet GIWA tersedia.**
-
-| Metrik | Definisi tepat | Sumber pengukuran | Target yang diusulkan |
-|---|---|---|---|
-| Volume transaksi | Total nilai yang tertagih lewat `CardVault.charge` di mainnet | Log event onchain | `[ISI: target 90 hari]` |
-| TVL | Saldo setoran ditambah escrow yang tertahan di `CardVault` | State onchain | `[ISI: target 90 hari]` |
-| Akuisisi pengguna | Alamat pemilik unik yang mendanai vault di mainnet | State onchain | `[ISI: target 90 hari]` |
-| Pelanggan B2B | Organisasi yang menerbitkan kartu untuk agent penggunanya | Kontrak/perjanjian, dilaporkan terpisah | `[ISI]` |
-
-**Catatan integritas metrik.** Semua metrik Set A dan Set B kecuali unduhan paket dan pelanggan B2B dapat diverifikasi langsung dari state dan event onchain — pihak ketiga dapat menghitung ulang tanpa memercayai kami. Kami akan menerbitkan skrip perhitungan bersama laporannya. Untuk mencegah metrik yang digelembungkan sendiri, kami mengusulkan agar dompet dan alamat milik tim dikecualikan dari perhitungan dan didaftarkan di muka.
-
-#### EN
+## 7. KPI proposal for the bonus grant tier
 
 **Principle.** The bonus is tied to transaction volume, TVL, and user acquisition. We will say one thing directly: while GIWA mainnet is not yet available, TVL and real-value transaction volume are not honest metrics for this product. So we propose two KPI sets — a testnet set that applies until mainnet, and a mainnet set that replaces it from mainnet launch day. Every number below is a **target we are proposing and are willing to negotiate**, not an achievement. We have no users yet.
 
@@ -477,29 +249,7 @@ The program allows applying to more than one track, with a maximum of three team
 
 ---
 
-## 8. Yang kami minta / What we are asking for
-
-#### ID
-
-**Dari struktur hibah program.**
-
-- Hibah awal sekitar US$20.000 setelah menyelesaikan program. Digunakan untuk `[ISI: alokasi — mis. waktu pengembang, audit keamanan, infrastruktur RPC/hosting, biaya Demoday]`.
-- Kelayakan untuk tingkat bonus hingga US$80.000 yang terikat KPI, dengan KPI yang diusulkan di Seksi 7 dan siap dinegosiasikan.
-- Pertimbangan untuk pencantuman di dalam aplikasi GIWA Wallet, dengan bentuk integrasi seperti dijelaskan di 4.6.
-- Perkenalan kepada VC papan atas, bila tim dinilai siap untuk itu.
-
-Kami memahami bahwa hibah bersifat kena pajak dan kami memperhitungkannya dalam perencanaan kami; `[ISI: konfirmasi bagaimana pemohon menangani kewajiban pajak di yurisdiksinya]`.
-
-**Dukungan non-finansial yang justru paling menentukan bagi produk ini.**
-
-1. **Akses RPC yang andal.** RPC publik GIWA Sepolia bersifat *rate-limited* dan dinyatakan hanya untuk pengembangan. Sebuah endpoint dengan batas yang dinaikkan, atau kunci API yang di-*allowlist*, akan sangat menurunkan risiko demo langsung dan pengujian beban.
-2. **Kuota faucet yang lebih besar untuk dompet demo.** Batas 0,005–0,01 ETH per 24 jam membatasi jumlah dompet demo yang dapat kami jalankan sekaligus. Alokasi khusus untuk beberapa alamat demo sudah cukup.
-3. **Kontak teknis untuk integrasi GIWA Wallet.** Kami ingin menyelaraskan bentuk permukaan persetujuan dengan pedoman tim GIWA Wallet sedini mungkin, bukan sesudah dibangun.
-4. **Kejelasan jadwal mainnet GIWA.** Peluncuran mainnet kami dan set KPI Set B bergantung padanya.
-5. **Umpan balik atas skema settlement.** Kami memilih menyimpang dari x402 `exact_evm` karena alasan teknis di 4.2. Masukan dari tim GIWA akan kami terima, terutama jika ada arah interoperabilitas yang ingin didorong di ekosistem.
-6. **Konfirmasi kelayakan aplikasi.** Kami mendaftar setelah tenggat perpanjangan 31 Juli 2026, mengandalkan pernyataan halaman program bahwa aplikasi baru diterima selama Phase 2. Kami meminta konfirmasi eksplisit bahwa aplikasi ini akan ditinjau, dan jika tidak, kami meminta arahan mengenai siklus berikutnya.
-
-#### EN
+## 8. What we are asking for
 
 **From the program's grant structure.**
 
@@ -521,81 +271,80 @@ We understand the grants are taxable and account for that in our planning; `[FIL
 
 ---
 
-## Lampiran A — Klaim teknis dan cara memverifikasinya / Appendix A — Technical claims and how to verify them
+## Appendix A — Technical claims and how to verify them
 
-**ID.** Tabel ini ada agar reviewer dapat memeriksa sendiri setiap klaim teknis di dokumen ini tanpa memercayai kami. Baris yang berisi placeholder harus dilengkapi pemohon sebelum submit. / **EN.** This table exists so a reviewer can check every technical claim in this document without trusting us. Rows containing placeholders must be completed by the applicant before submission.
+This table exists so a reviewer can check every technical claim in this document without trusting us. Rows containing placeholders must be completed by the applicant before submission.
 
-| Klaim / Claim | Verifikasi / How to verify |
+| Claim | How to verify |
 |---|---|
-| GIWA adalah L2 OP Stack, EVM-equivalent / GIWA is an OP Stack, EVM-equivalent L2 | https://docs.giwa.io |
-| GIWA Sepolia chain ID 91342 | https://docs.giwa.io — halaman connect-to-giwa |
-| Predeploy genesis: EntryPoint ERC-4337 v0.6 dan v0.7, Safe, Permit2, Multicall3 | https://docs.giwa.io — halaman contracts; alamat predeploy dapat dibuka langsung di explorer |
-| Flashblocks ~200 ms preconfirmation; interval blok 1 detik | https://docs.giwa.io — halaman flashblocks |
-| RPC publik *rate-limited* dan hanya untuk pengembangan | https://docs.giwa.io — halaman connect-to-giwa |
-| Faucet 0,005–0,01 ETH per 24 jam | https://docs.giwa.io — halaman faucets |
-| up.id terverifikasi KYC dan *soul-bound* | https://docs.giwa.io — halaman up.id |
-| Mainnet GIWA masih dalam pengembangan | https://docs.giwa.io |
-| Struktur hibah, track, kriteria seleksi, dan jadwal GASOK | https://giwa.io/gasok |
-| `CardVault` ter-deploy dan terverifikasi | `[ISI / FILL: https://sepolia-explorer.giwa.io/address/...]` |
-| `gUSD` ter-deploy dan terverifikasi | `[ISI / FILL: https://sepolia-explorer.giwa.io/address/...]` |
-| Transaksi mint kartu dan charge yang sukses | `[ISI / FILL: tautan transaksi]` |
-| Kode sumber lengkap, lisensi, dan atribusi MIT | `[ISI / FILL: URL repo publik]` + berkas `NOTICE` di dalamnya |
-| Kami menggunakan kembali kode MIT dari repositori publik agentcard.sh dengan atribusi | Berkas `NOTICE` di repo kami + berkas `LICENSE` di repositori hulu |
-| Kami tidak berafiliasi dengan agentcard.sh maupun akselerator mana pun | Tidak ada klaim afiliasi yang dibuat di dokumen ini; tidak ada klaim seperti itu yang boleh ditambahkan |
+| GIWA is an OP Stack, EVM-equivalent L2 | https://docs.giwa.io |
+| GIWA Sepolia chain ID 91342 | https://docs.giwa.io — connect-to-giwa page |
+| Genesis predeploys: ERC-4337 EntryPoint v0.6 and v0.7, Safe, Permit2, Multicall3 | https://docs.giwa.io — contracts page; the predeploy addresses can be opened directly in the explorer |
+| Flashblocks ~200 ms preconfirmations; 1-second block interval | https://docs.giwa.io — flashblocks page |
+| Public RPC is rate-limited and development-only | https://docs.giwa.io — connect-to-giwa page |
+| Faucet gives 0.005–0.01 ETH per 24 hours | https://docs.giwa.io — faucets page |
+| up.id is KYC-verified and soul-bound | https://docs.giwa.io — up.id page |
+| GIWA mainnet is still under development | https://docs.giwa.io |
+| GASOK grant structure, tracks, selection criteria, and schedule | https://giwa.io/gasok |
+| `CardVault` deployed and verified | https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750 |
+| `gUSD` deployed and verified | https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746 |
+| Successful card mint and charge transactions | `[FILL: transaction links]` |
+| Full source code, license, and MIT attribution | `[FILL: public repo URL]` + the `NOTICE` file inside it |
+| We reuse MIT-licensed code from agentcard.sh's public repositories with attribution | The `NOTICE` file in our repo + the `LICENSE` file in the upstream repositories |
+| We are not affiliated with agentcard.sh or with any accelerator | No affiliation claim is made in this document; no such claim may be added |
 
 ---
 
-## 9. TODO — yang harus disediakan pemohon sebelum submit / TODO — what the applicant must supply before submitting
+## 9. TODO — what the applicant must supply before submitting
 
-> **ID.** Dokumen ini **tidak boleh disubmit** sebelum seluruh kotak di bawah tercentang dan seluruh `[ISI: ...]` serta `[FILL: ...]` di dokumen ini hilang.
-> **EN.** This document **must not be submitted** until every box below is checked and every `[ISI: ...]` and `[FILL: ...]` in this document is gone.
+> This document **must not be submitted** until every box below is checked and every `[FILL: ...]` in this document is gone.
 
-**Tim dan identitas / Team and identity**
+**Team and identity**
 
-- [ ] Nama lengkap, peran, dan komitmen waktu setiap anggota tim (Seksi 4.5) / Full name, role, and time commitment for each team member (Section 4.5)
-- [ ] Ukuran tim / Team size
-- [ ] Tautan GitHub dan X/Twitter setiap anggota / GitHub and X/Twitter links for each member
-- [ ] Pekerjaan relevan yang pernah dirilis, dengan tautan yang dapat diverifikasi — tidak boleh dikarang / Relevant shipped work with verifiable links — must not be invented
-- [ ] Paragraf "mengapa tim ini" / The "why this team" paragraph
-- [ ] Kesenjangan kemampuan dan rencana menutupnya / Capability gaps and the plan to close them
-- [ ] Rencana rekrutmen jika terpilih, atau pernyataan tidak ada / Hiring plan if selected, or a statement that there is none
-- [ ] Nama entitas hukum jika ada, dan negara pendirian / Legal entity name if any, and country of incorporation
-- [ ] Bagaimana kewajiban pajak atas hibah ditangani (Seksi 8) / How the tax obligation on the grant is handled (Section 8)
+- [ ] Full name, role, and time commitment for each team member (Section 4.5)
+- [ ] Team size
+- [ ] GitHub and X/Twitter links for each member
+- [ ] Relevant shipped work with verifiable links — must not be invented
+- [ ] The "why this team" paragraph
+- [ ] Capability gaps and the plan to close them
+- [ ] Hiring plan if selected, or a statement that there is none
+- [ ] Legal entity name if any, and country of incorporation
+- [ ] How the tax obligation on the grant is handled (Section 8)
 
-**Kontak / Contact**
+**Contact**
 
-- [ ] Alamat email utama untuk aplikasi / Primary email address for the application
-- [ ] Kontak cadangan (Telegram/Discord/KakaoTalk sesuai preferensi tim GIWA) / Backup contact (Telegram/Discord/KakaoTalk per the GIWA team's preference)
-- [ ] Zona waktu dan jam yang tersedia untuk wawancara / Timezone and availability for interviews
+- [ ] Primary email address for the application
+- [ ] Backup contact (Telegram/Discord/KakaoTalk per the GIWA team's preference)
+- [ ] Timezone and availability for interviews
 
-**Tautan dan artefak / Links and artifacts**
+**Links and artifacts**
 
-- [ ] URL repositori publik / Public repository URL
-- [ ] Alamat `CardVault` dan `gUSD` yang ter-deploy, ditambah tautan explorer yang menunjukkan status Verified / Deployed `CardVault` and `gUSD` addresses, plus explorer links showing Verified status
-- [ ] Tautan transaksi mint dan charge contoh / Example mint and charge transaction links
-- [ ] Landing page atau situs proyek, jika sudah ada / Landing page or project site, if one exists
-- [ ] Nama paket npm dan status publikasinya / npm package name and publication status
-- [ ] Daftar komponen yang belum rampung per tanggal submit (Seksi 4.3) — harus akurat / List of components not yet complete as of the submission date (Section 4.3) — must be accurate
+- [ ] Public repository URL
+- [x] Deployed `CardVault` and `gUSD` addresses, plus explorer links showing Verified status — supplied in Section 4.3 and Appendix A
+- [ ] Example mint and charge transaction links
+- [ ] Landing page or project site, if one exists
+- [ ] npm package name and publication status
+- [ ] List of components not yet complete as of the submission date (Section 4.3) — must be accurate
 
-**Materi demo / Demo material**
+**Demo material**
 
-- [ ] Video demo (rekaman layar): onboarding → agent membayar API berbayar → persetujuan di luar policy → kartu hangus / Demo video (screen recording): onboarding → agent pays the paid API → out-of-policy approval → card goes void
-- [ ] Tautan video yang dapat diakses publik dan tidak kedaluwarsa / Publicly accessible, non-expiring video link
-- [ ] Slide deck jika form memintanya / Slide deck if the form asks for one
+- [ ] Demo video (screen recording): onboarding → agent pays the paid API → out-of-policy approval → card goes void
+- [ ] Publicly accessible, non-expiring video link
+- [ ] Slide deck if the form asks for one
 
-**Angka dan target / Numbers and targets**
+**Numbers and targets**
 
-- [ ] Target KPI Set A (Seksi 7) — putuskan angka yang berani tetapi dapat dipertanggungjawabkan / Set A KPI targets (Section 7) — pick numbers that are ambitious but defensible
-- [ ] Target KPI Set B (Seksi 7) / Set B KPI targets (Section 7)
-- [ ] Alokasi penggunaan hibah US$20.000 (Seksi 8) / Allocation of the $20,000 grant (Section 8)
-- [ ] Rencana audit keamanan sebelum mainnet (Seksi 6) / Pre-mainnet security audit plan (Section 6)
-- [ ] Angka ukuran pasar dengan sumber, jika ingin disertakan (Seksi 4.4) — hanya dengan kutipan / Market size figures with sources, if you want to include them (Section 4.4) — only with citations
+- [ ] Set A KPI targets (Section 7) — pick numbers that are ambitious but defensible
+- [ ] Set B KPI targets (Section 7)
+- [ ] Allocation of the $20,000 grant (Section 8)
+- [ ] Pre-mainnet security audit plan (Section 6)
+- [ ] Market size figures with sources, if you want to include them (Section 4.4) — only with citations
 
-**Pemeriksaan akhir sebelum submit / Final checks before submitting**
+**Final checks before submitting**
 
-- [ ] Cari seluruh dokumen untuk `[ISI:` dan `[FILL:` — harus nol hasil / Search the whole document for `[ISI:` and `[FILL:` — must return zero results
-- [ ] Pastikan tidak ada klaim afiliasi dengan Y Combinator, agentcard.sh, atau akselerator mana pun / Confirm there is no claim of affiliation with Y Combinator, agentcard.sh, or any accelerator
-- [ ] Pastikan tidak ada angka pengguna, pendapatan, atau traksi yang tidak dapat dibuktikan / Confirm there are no user, revenue, or traction numbers that cannot be evidenced
-- [ ] Pastikan setiap alamat kontrak di dokumen benar-benar menunjukkan Verified di explorer / Confirm every contract address in the document really shows Verified on the explorer
-- [ ] Konfirmasi kelayakan aplikasi ke pihak GIWA lewat kontak resmi di halaman GASOK sebelum atau bersamaan dengan submit / Confirm application eligibility with GIWA via the official contact on the GASOK page, before or alongside submitting
-- [ ] Putuskan bahasa submit (Inggris atau Korea) dan siapkan terjemahan jika form meminta Korea / Decide the submission language (English or Korean) and prepare a translation if the form requires Korean
+- [ ] Search the whole document for `[FILL:` — must return zero results
+- [ ] Confirm there is no claim of affiliation with Y Combinator, agentcard.sh, or any accelerator
+- [ ] Confirm there are no user, revenue, or traction numbers that cannot be evidenced
+- [ ] Confirm every contract address in the document really shows Verified on the explorer
+- [ ] Confirm application eligibility with GIWA via the official contact on the GASOK page, before or alongside submitting
+- [ ] Decide the submission language (English or Korean) and prepare a translation if the form requires Korean
