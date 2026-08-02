@@ -940,8 +940,9 @@ function InstallSection() {
 
         <Reveal delay={0.16}>
           <p className="mt-5 text-[13px] leading-relaxed text-[#18161B]/50">
-            Not on npm yet, so that command won’t resolve today. Until the package is
-            published you install from source: clone{' '}
+            Node 22.5 or newer. The wizard is resumable, so a faucet wait or a
+            Ctrl-C costs you nothing — run it again and it picks up where it
+            stopped. Source at{' '}
             <a
               href={REPO_URL}
               target="_blank"
@@ -949,8 +950,8 @@ function InstallSection() {
               className="underline decoration-[#18161B]/25 underline-offset-4 transition-colors hover:text-[#18161B]"
             >
               github.com/Lexirieru/agentcard
-            </a>{' '}
-            and run the CLI from the checkout.
+            </a>
+            .
           </p>
         </Reveal>
 

@@ -359,8 +359,6 @@ API and dashboard all built and tested; 960 tests passing.
 
 - No end-to-end run against the live chain. The script is written ([`docs/demo.md`](./docs/demo.md));
   nobody has walked it yet.
-- `giwacard` is **not published to npm**. Install from the repo per
-  [`llms-install.md`](./giwacard/llms-install.md).
 
 **Next:** B2B multi-tenant issuing · gas sponsorship via a paymaster · deeper `up.id` identity
 integration · GIWA Wallet embedding · mainnet when GIWA ships it.

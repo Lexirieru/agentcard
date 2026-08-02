@@ -76,20 +76,23 @@ explorer `https://sepolia-explorer.giwa.io`. gUSD has **6 decimals** — 1 gUSD 
 
 ## 1. Install the package
 
-`giwacard` is not published to npm yet, so install from this repository. Once it
-is published, step 1 collapses to `npx -y giwacard` and nothing else changes.
+`giwacard` is on npm. There is nothing to clone.
 
 ```sh
-cd giwacard
-bun install
-bun run build
-npm link            # puts `giwacard` on PATH
+npx -y giwacard --version
+```
+
+Every `giwacard …` command below works as `npx -y giwacard …`. Install it once
+if you would rather not re-resolve each time:
+
+```sh
+npm install -g giwacard
 ```
 
 Verify:
 
 ```sh
-giwacard --version  # -> 0.0.1
+giwacard --version  # -> 0.1.0
 ```
 
 If you do not want a global link, every `giwacard …` below also works as
@@ -260,7 +263,7 @@ echo "exit: $?"
 cat /tmp/giwacard-mcp.log
 ```
 
-Expect `exit: 0` and one line, `giwacard mcp v0.0.1 ready on stdio`.
+Expect `exit: 0` and one line, `giwacard mcp v0.1.0 ready on stdio`.
 
 Both halves matter. The line is on **stderr** by design: stdout is the JSON-RPC
 channel and a single stray byte there drops the host connection. And closing

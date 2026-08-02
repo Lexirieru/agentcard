@@ -28,9 +28,6 @@ State this accurately; several of these look finished from the code alone.
   deployed and verified (`smartcontracts/deployments/giwa-sepolia.md` has the
   addresses), but nobody has yet run onboarding, minted a card, and paid the
   merchant for real.
-- **`giwacard` is not published to npm.** The name is free but unreserved, and
-  the version is still `0.0.1`. `npx giwacard` does not resolve; install from the
-  repo per `giwacard/llms-install.md`.
 - **The grant application has ~58 unfilled placeholders.** See `docs/CLAUDE.md`.
 - **The demo has a script but no recording.** `docs/demo.md` has never been
   executed against the live testnet.
