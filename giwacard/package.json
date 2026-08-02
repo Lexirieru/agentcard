@@ -1,6 +1,6 @@
 {
   "name": "giwacard",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Agent-native virtual cards on GIWA Sepolia: chain clients, encrypted keystore, and CLI.",
   "license": "MIT",
   "type": "module",
@@ -57,5 +57,14 @@
     "@types/node": "^20.19.0",
     "tsdown": "^0.15.6",
     "typescript": "^5.9.0"
+  },
+  "homepage": "https://agentcard-eta.vercel.app",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Lexirieru/agentcard.git",
+    "directory": "giwacard"
+  },
+  "bugs": {
+    "url": "https://github.com/Lexirieru/agentcard/issues"
   }
 }
