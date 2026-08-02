@@ -27,6 +27,25 @@ vault owner()        0x56A2950ddE6B1040d1DCC4b4C4Fc314Bd56eFB0E
 ERC-1967 impl slot   0x0D7766158f14ad7bB82d9FD8A47734e801E3F5B8
 ```
 
+
+## Live services
+
+| Service | URL |
+| --- | --- |
+| Landing page | https://agentcard-eta.vercel.app |
+| Owner dashboard | https://agentcard-fe.vercel.app |
+| Demo merchant (GIWA Insights) | https://agentcard-production.up.railway.app |
+
+Merchant address: `0x500923476cb40e97957f9eF70a35a6D25E43b6cA` — it submits the
+charge itself, so it holds ETH for gas. Keep it topped up; the endpoint answers
+503 rather than crashing when it runs dry.
+
+**The dashboard's approval queue does not work on Vercel**, by design. It reads
+the daemon through a same-origin route that opens a 0600 token file on the same
+machine, and there is no such machine on a serverless host. Balance, cards,
+history and session keys all work — they read the chain from the browser.
+Approving stays a local action: `giwacard approve`.
+
 ## Cost
 
 The whole deployment cost **0.0000102 ETH** — GIWA's gas price was 0.001 gwei
