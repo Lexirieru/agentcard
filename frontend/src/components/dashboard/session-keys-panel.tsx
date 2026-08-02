@@ -52,9 +52,9 @@ export function SessionKeysPanel({
       }
     >
       {error ? (
-        <ErrorState message={error} onRetry={onRetry} />
+        <ErrorState title="Could not read your session keys" body={error} onRetry={onRetry} />
       ) : loading ? (
-        <SkeletonRows rows={2} />
+        <SkeletonRows count={2} />
       ) : !keys || keys.length === 0 ? (
         <EmptyState
           title="No session keys yet"

@@ -472,7 +472,7 @@ function CardSection({
           className={staggerClass('font-light text-[#18161B]')}
           style={{ ...h2Style, animationDelay: '0.15s' }}
         >
-          Spend Once
+          It Spends Once
         </h2>
         <div
           className={staggerClass(
@@ -505,7 +505,7 @@ function CardSection({
           className={staggerClass('font-light text-[#18161B] md:text-right')}
           style={{ ...h2Style, animationDelay: '0.5s' }}
         >
-          Then It’s Dead
+          Then It’s Gone
         </h2>
       </div>
     </section>
