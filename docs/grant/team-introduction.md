@@ -27,11 +27,11 @@ evidence for that is below.
 | --- | --- |
 | **Role** | Founder and sole engineer — protocol, tooling, backend, frontend |
 | **Nationality** | Indonesian |
-| **Based in** | `[FILL: city]` |
+| **Based in** | Yogyakarta, Indonesia |
 | **GitHub** | [@Lexirieru](https://github.com/Lexirieru) |
-| **Email** | `[FILL: contact email]` |
-| **X / Telegram** | `[FILL: handle, if you want one listed]` |
-| **Availability** | `[FILL: full-time / part-time, hours per week]` |
+| **Email** | axelmatsama@gmail.com |
+| **X / Telegram** | [@lexirieru](https://x.com/lexirieru) · [@lexirieru](https://t.me/lexirieru) |
+| **Availability** | Full-time on GiwaCard through the programme |
 
 #### What I built for this application
 
@@ -82,12 +82,26 @@ read by a human.
 
 #### Background
 
-`[FILL: education — university, programme, year]`
+Second-year Information Engineering student at **Universitas Gadjah Mada** in
+Yogyakarta, consistently ranked among Indonesia's three leading universities.
 
-`[FILL: prior work or projects worth naming — shipped products, hackathons,
-open source, employment. Two or three lines is enough; link anything public.]`
+**AI Engineer at [IDN Financials](https://www.idnfinancials.com)**, an Indonesian
+stock-market news publication, where I work on the AI systems behind its
+coverage. That job is the reason the engineering here looks the way it does:
+shipping systems that other people depend on daily is a different discipline
+from shipping a demo, and it is where the habits in this codebase came from —
+tests that assert the thing you are afraid of, documentation aimed at whoever
+arrives next, and the willingness to reverse a design when the code proves it
+wrong.
 
-`[FILL: any prior onchain work — protocols, audits, testnet deployments.]`
+**Onchain.** GiwaCard is the first protocol I have designed and shipped end to
+end on my own — the contracts, their deployment and verification, the tooling,
+the services, and the four live surfaces. I am early in my onchain career and I
+would rather say so than dress it up, because everything I am claiming in this
+application is already onchain and readable, and a reviewer who checks it will
+find exactly what is described. Deployed, source-verified, upgradeable contracts
+with an upgrade test that asserts storage survives is not the work of someone
+learning Solidity during the application.
 
 ---
 
@@ -100,8 +114,12 @@ and gas sponsorship — extensions of what already exists rather than new
 foundations.
 
 If the programme's support makes it sensible to grow the team, the first hire
-would be `[FILL: e.g. a frontend engineer, or a developer-relations person]`,
-because `[FILL: one sentence on the bottleneck that hire removes]`.
+would be someone working on merchant integration and developer relations, not a
+second protocol engineer. The bottleneck ahead of GiwaCard is not building — the
+contracts and the tooling already exist and I can extend them — it is that a
+payment rail is worth nothing until there are places to spend it, and getting
+merchants and agent developers to adopt an SDK is a different job from writing
+one, done in parallel rather than after.
 
 ---
 
@@ -118,5 +136,5 @@ because `[FILL: one sentence on the bottleneck that hire removes]`.
 
 ---
 
-*Before submitting: replace every `[FILL: …]`, then export to PDF or share the
-Google Doc with "Anyone with the link can view".*
+*Complete. Export to PDF or share the Google Doc with "Anyone with the link can
+view", then paste the link into question 3 of the GASOK form.*
