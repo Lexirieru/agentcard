@@ -36,6 +36,7 @@ const TOP_EPSILON = 2
 const VAULT_URL =
   'https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750'
 const REPO_URL = 'https://github.com/Lexirieru/agentcard'
+const DASHBOARD_URL = 'https://agentcard-fe.vercel.app'
 const README_URL = `${REPO_URL}#readme`
 
 const SECTION_FEATURES = 'features'
@@ -493,12 +494,12 @@ function CardSection({
             back to you.
           </p>
           <a
-            href={REPO_URL}
+            href={DASHBOARD_URL}
             target="_blank"
             rel="noreferrer"
             className="mt-6 inline-block rounded-full bg-[#18161B] px-6 py-3 text-sm font-medium text-white transition-colors hover:bg-[#18161B]/90"
           >
-            Get started
+            Open the dashboard
           </a>
         </div>
         <h2
@@ -1245,12 +1246,17 @@ function Nav({
               transitionTimingFunction: STAGGER_EASE,
             }}
           >
-            <button className="flex items-center gap-2 rounded-full py-1.5 pr-4 text-sm text-white">
+            <a
+              href={DASHBOARD_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-2 rounded-full py-1.5 pr-4 text-sm text-white"
+            >
               <span className="flex h-7 w-7 items-center justify-center rounded-full border border-white/20">
                 <User size={14} strokeWidth={1.8} />
               </span>
               Account
-            </button>
+            </a>
             <button
               onClick={() => onNavigate(SECTION_INSTALL)}
               className="rounded-full bg-white px-5 py-2.5 text-sm font-medium text-gray-900"
@@ -1313,7 +1319,10 @@ function Nav({
         </nav>
 
         <div className="hidden items-center gap-3 md:flex">
-          <button
+          <a
+            href={DASHBOARD_URL}
+            target="_blank"
+            rel="noreferrer"
             className={`flex items-center gap-2 rounded-full py-1.5 pr-4 text-sm transition-colors duration-500 ${
               d ? 'text-[#18161B]' : 'text-white'
             }`}
@@ -1326,7 +1335,7 @@ function Nav({
               <User size={14} strokeWidth={1.8} />
             </span>
             Account
-          </button>
+          </a>
           <button
             onClick={() => onNavigate(SECTION_INSTALL)}
             className={`rounded-full px-5 py-2.5 text-sm font-medium transition-colors duration-500 ${

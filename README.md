@@ -13,12 +13,13 @@ contract. Anything outside those limits stops and waits for a human.
 [![Network](https://img.shields.io/badge/GIWA_Sepolia-91342-1f6feb?style=for-the-badge)](https://sepolia-explorer.giwa.io)
 [![Contracts](https://img.shields.io/badge/contracts-verified-2ea043?style=for-the-badge)](https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750)
 [![Tests](https://img.shields.io/badge/tests-960_passing-2ea043?style=for-the-badge)](#verify-it-yourself)
-[![Upgradeable](https://img.shields.io/badge/UUPS-upgradeable-8957e5?style=for-the-badge)](https://docs.openzeppelin.com/upgrades)
+[![Live](https://img.shields.io/badge/demo-live-2ea043?style=for-the-badge)](https://agentcard-eta.vercel.app)
 
+**[Live site](https://agentcard-eta.vercel.app)** ·
+**[Dashboard](https://agentcard-fe.vercel.app)** ·
+**[Demo merchant](https://agentcard-production.up.railway.app)** ·
 **[CardVault](https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750)** ·
-**[gUSD](https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746)** ·
-**[Explorer](https://sepolia-explorer.giwa.io)** ·
-**[GIWA Docs](https://docs.giwa.io)**
+**[gUSD](https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746)**
 
 </div>
 
@@ -89,6 +90,7 @@ cast call $VAULT "paymentToken()(address)" --rpc-url $RPC   # the gUSD proxy abo
 | 🚫 **The agent cannot self-approve** | `cd giwacard && bun test src/mcp/surface.test.ts` — asserted against a live `tools/list` response, not against a constant |
 | 📄 **The docs match the code** | `bun test src/package.test.ts` — every tool the shipped docs name must be one the server advertises |
 | 💰 **Deployment cost** | 0.0000102 ETH, at 0.001 gwei. Gas is not the constraint here |
+| 🌐 **The demo merchant answers** | `curl https://agentcard-production.up.railway.app/insights` returns a 402 with its full payment requirements |
 
 ---
 
