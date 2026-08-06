@@ -19,7 +19,7 @@ contract. Anything outside those limits stops and waits for a human.
 **[Dashboard](https://agentcard-fe.vercel.app)** ·
 **[Demo merchant](https://agentcard-production.up.railway.app)** ·
 **[CardVault](https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750)** ·
-**[gUSD](https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746)**
+**[gUSD](https://sepolia-explorer.giwa.io/address/0xADA0466303441102cb16F8eC1594C744d603f746)**
 
 </div>
 
@@ -66,7 +66,7 @@ Every contract is **source-verified on Blockscout**. Nothing below is a screensh
 |---|---|
 | **CardVault** (proxy) | [`0xD89395Df…11e88750`](https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750) |
 | CardVault (implementation) | [`0x0D776615…01E3F5B8`](https://sepolia-explorer.giwa.io/address/0x0D7766158f14ad7bB82d9FD8A47734e801E3F5B8) |
-| **gUSD** (proxy) | [`0xADa04663…d603F746`](https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746) |
+| **gUSD** (proxy) | [`0xADA04663…d603f746`](https://sepolia-explorer.giwa.io/address/0xADA0466303441102cb16F8eC1594C744d603f746) |
 | gUSD (implementation) | [`0x29faf6cA…a6b724DD`](https://sepolia-explorer.giwa.io/address/0x29faf6cAFA4BeA1dC7c232f0a1818d4da6b724DD) |
 
 Read it off the chain, without trusting this page:
@@ -74,7 +74,7 @@ Read it off the chain, without trusting this page:
 ```bash
 RPC=https://sepolia-rpc.giwa.io
 VAULT=0xD89395Df78aaFdF86b330899d1C6189211e88750
-GUSD=0xADa0466303441102cb16F8Ec1594C744d603F746
+GUSD=0xADA0466303441102cb16F8eC1594C744d603f746
 
 cast call $GUSD  "name()(string)"          --rpc-url $RPC   # "GiwaCard USD"
 cast call $GUSD  "decimals()(uint8)"       --rpc-url $RPC   # 6
@@ -378,7 +378,7 @@ Built on [GIWA](https://giwa.io), an Ethereum L2 in the Upbit ecosystem.
 <br/>
 
 **[CardVault](https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750)** ·
-**[gUSD](https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746)** ·
+**[gUSD](https://sepolia-explorer.giwa.io/address/0xADA0466303441102cb16F8eC1594C744d603f746)** ·
 **[Contributor notes](./CLAUDE.md)** ·
 **[Demo runbook](./docs/demo.md)**
 

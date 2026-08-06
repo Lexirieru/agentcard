@@ -101,8 +101,12 @@ GiwaCard has four layers, all of which are publicly inspectable.
 
 - `gUSD` and `CardVault` deployed on GIWA Sepolia (chain ID 91342) and **verified** on `sepolia-explorer.giwa.io` (implementation and proxy), so a reviewer can read the source and call read functions directly from the explorer. Deployed and verified on 2 August 2026, solc 0.8.28:
   - `CardVault` proxy [`0xD89395Df78aaFdF86b330899d1C6189211e88750`](https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750), implementation [`0x0D7766158f14ad7bB82d9FD8A47734e801E3F5B8`](https://sepolia-explorer.giwa.io/address/0x0D7766158f14ad7bB82d9FD8A47734e801E3F5B8)
-  - `gUSD` proxy [`0xADa0466303441102cb16F8Ec1594C744d603F746`](https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746), implementation [`0x29faf6cAFA4BeA1dC7c232f0a1818d4da6b724DD`](https://sepolia-explorer.giwa.io/address/0x29faf6cAFA4BeA1dC7c232f0a1818d4da6b724DD)
-- **An agent payment path that is built and tested, but not yet exercised end to end on the live chain.** The path is: agent requests a card → card is minted with escrow → the merchant charges it against the paid API → the report is returned → the card goes void and the remaining escrow is released. Every step of it is covered by the test suite (960 tests across the four packages), and the contracts it runs against are deployed and verified. What we cannot yet show you is a transaction trace of the whole loop on GIWA Sepolia, because we have not run it there yet. We would rather say so than describe a rehearsal as a performance. Once it is run: `[FILL: mint tx link]`, `[FILL: charge tx link]`.
+  - `gUSD` proxy [`0xADA0466303441102cb16F8eC1594C744d603f746`](https://sepolia-explorer.giwa.io/address/0xADA0466303441102cb16F8eC1594C744d603f746), implementation [`0x29faf6cAFA4BeA1dC7c232f0a1818d4da6b724DD`](https://sepolia-explorer.giwa.io/address/0x29faf6cAFA4BeA1dC7c232f0a1818d4da6b724DD)
+- **An agent payment path exercised end to end on the live chain.** On **6 August 2026** the whole loop ran on GIWA Sepolia for the first time: the agent minted a card, the merchant charged it, the paid report came back, and the unspent escrow returned. The two transactions a reviewer should read are:
+  - **Mint** [`0x36c3aa76…cfd9602a`](https://sepolia-explorer.giwa.io/tx/0x36c3aa762f7901cda9a3dce7d1c80494cc256ce1b79bc8d196eb3064cfd9602a) — card 1, cap 5 gUSD, scoped to the merchant, one-hour expiry. Escrow moved by the **cap**, not the price.
+  - **Charge** [`0x0a9fb47c…a4a51958`](https://sepolia-explorer.giwa.io/tx/0x0a9fb47c699f58bd261476d08d050fda1fac78843e6470783457ff55a4a51958) — `CardCharged`, 1 gUSD taken, 4 gUSD released. Note the sender: `0x5009…b6cA`, the **merchant**, not the agent's session key. The agent handed over a card; it never submitted the payment.
+
+  Three further claims were checked in the same run rather than asserted. A second charge of the same card was refused (`CARD_ALREADY_USED`). A 15 gUSD request against a 10 gUSD per-card cap produced an approval request and **no transaction at all** — no funds moved. A card scoped to a merchant outside the allowlist was refused outright and, by design, could not be rescued by owner approval either. Every step is also covered by the test suite (960 tests across the four packages).
 
 **We do not claim a finished MVP.** As of the date of this application, the components not yet complete are `[FILL: components still in progress — e.g. dashboard, CLI wizard, npm publication]`. We say so explicitly, because an unverifiable readiness claim would undermine the credibility of the entire application.
 
@@ -287,7 +291,7 @@ This table exists so a reviewer can check every technical claim in this document
 | GIWA mainnet is still under development | https://docs.giwa.io |
 | GASOK grant structure, tracks, selection criteria, and schedule | https://giwa.io/gasok |
 | `CardVault` deployed and verified | https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750 |
-| `gUSD` deployed and verified | https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746 |
+| `gUSD` deployed and verified | https://sepolia-explorer.giwa.io/address/0xADA0466303441102cb16F8eC1594C744d603f746 |
 | Successful card mint and charge transactions | `[FILL: transaction links]` |
 | Full source code, license, and MIT attribution | `[FILL: public repo URL]` + the `NOTICE` file inside it |
 | We reuse MIT-licensed code from agentcard.sh's public repositories with attribution | The `NOTICE` file in our repo + the `LICENSE` file in the upstream repositories |

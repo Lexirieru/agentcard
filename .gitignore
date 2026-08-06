@@ -17,3 +17,7 @@ smartcontracts/lib/
 smartcontracts/cache/
 smartcontracts/out/
 .gstack/
+
+# Written by `giwacard init` — carries the local vault owner address,
+# and can be made to carry the keystore passphrase. Never commit it.
+.mcp.json

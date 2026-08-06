@@ -24,13 +24,33 @@ one before working there; this file only carries what crosses boundaries.
 
 State this accurately; several of these look finished from the code alone.
 
-- **No end-to-end run has happened against the live chain.** The contracts are
-  deployed and verified (`smartcontracts/deployments/giwa-sepolia.md` has the
-  addresses), but nobody has yet run onboarding, minted a card, and paid the
-  merchant for real.
 - **The grant application has ~58 unfilled placeholders.** See `docs/CLAUDE.md`.
-- **The demo has a script but no recording.** `docs/demo.md` has never been
-  executed against the live testnet.
+- **The demo has a script but no recording.** `docs/demo.md` has now been
+  executed once against the live testnet, but nothing has been filmed.
+- **Nobody outside this repo has ever used it.** Zero external users, one
+  merchant, and that merchant is ours.
+
+## What the first live run proved, and what it broke
+
+The end-to-end loop ran on GIWA Sepolia on 2026-08-06 — onboarding, mint, a
+merchant-submitted charge, the report, and escrow release. Transactions are in
+`docs/grant/gasok-application.md` §4.3. Four things it found, none of which the
+960 tests could have:
+
+- **`giwacard init` cannot complete without a terminal.** The first-run branch
+  prompts for the passphrase unconditionally and ignores `$GIWACARD_PASSPHRASE`,
+  which the help text advertises for exactly this case. Only the *resume* branch
+  honours it. CI, containers and headless hosts all dead-end here.
+- **Onboarding finishes with an empty vault and no way to fill it.** There is no
+  `deposit` in the CLI or in the MCP tools — only in the dashboard — yet the
+  wizard signs off with "ask your agent to buy something". The agent cannot buy
+  anything; available balance is zero.
+- **Read-after-write against the public RPC is stale for about a second.** The
+  escrow moment, which is the whole point of the mint, reads as zero if you look
+  immediately. Poll, or read Flashblocks. Do not screenshot the first response.
+- **One address in the docs carried a bad EIP-55 checksum** and viem rejected
+  it, so anyone copy-pasting the README env block hit a crash on their first
+  command. Fixed. Checksum every address you paste into a doc.
 
 ## Commands
 

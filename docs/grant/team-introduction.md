@@ -127,7 +127,7 @@ one, done in parallel rather than after.
 
 | Claim | Where to check |
 | --- | --- |
-| Contracts live and verified | [CardVault](https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750) · [gUSD](https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746) |
+| Contracts live and verified | [CardVault](https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750) · [gUSD](https://sepolia-explorer.giwa.io/address/0xADA0466303441102cb16F8eC1594C744d603f746) |
 | Package published | [npmjs.com/package/giwacard](https://www.npmjs.com/package/giwacard) |
 | Source and history | [github.com/Lexirieru/agentcard](https://github.com/Lexirieru/agentcard) |
 | Landing page | https://agentcard-eta.vercel.app |

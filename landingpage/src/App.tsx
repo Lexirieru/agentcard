@@ -1103,7 +1103,7 @@ function Footer() {
                 </li>
                 <li>
                   <a
-                    href="https://sepolia-explorer.giwa.io/address/0xADa0466303441102cb16F8Ec1594C744d603F746"
+                    href="https://sepolia-explorer.giwa.io/address/0xADA0466303441102cb16F8eC1594C744d603f746"
                     target="_blank"
                     rel="noreferrer"
                     className="transition-colors hover:text-[#18161B]"
