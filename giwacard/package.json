@@ -1,6 +1,6 @@
 {
   "name": "giwacard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Agent-native virtual cards on GIWA Sepolia: chain clients, encrypted keystore, and CLI.",
   "license": "MIT",
   "type": "module",
