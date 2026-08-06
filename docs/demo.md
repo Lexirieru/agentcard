@@ -11,22 +11,43 @@ does not exist yet.
 
 ## Before the camera rolls
 
-Gas first — the faucet is rate limited to 0.005–0.01 ETH per 24 hours, so this
-cannot be done on the day.
+**Publish the package first.** The scenes below run `npx giwacard`, which serves
+whatever is on npm. Recording against a stale published version means the newest
+command answers "Unknown command" on camera. Check `npm view giwacard version`
+against `giwacard/package.json` before anything else.
 
-Gas on GIWA is far cheaper than a mainnet instinct suggests: the price sat at
-0.001 gwei and **deploying both proxies cost 0.0000102 ETH in total**. A single
-faucet claim covers the entire demo several times over.
+Gas is a non-issue, and it is worth knowing that precisely rather than budgeting
+from a mainnet instinct. Measured on the 2026-08-06 run at a gas price of
+0.001 gwei:
 
-| Address | Needs | Why |
+| Address | Transactions | ETH actually spent |
 | --- | --- | --- |
-| deployer | already funded | one-time: deploys both proxies |
-| owner wallet | ~0.0005 ETH | deposits, policy, approvals |
-| agent session key | ~0.0005 ETH | one mint per purchase |
-| merchant key | ~0.0005 ETH | one charge per purchase |
+| owner wallet | 7 (faucet, policy, approve, deposit, cancel) | 0.0000007 |
+| agent session key | 2 mints | 0.00000044 |
+| merchant key | 1 charge | 0.0000001 |
 
-Confirm each balance before starting; `giwacard status` reports the owner and
-session key, and the merchant refuses to start if its key is unfunded.
+**The whole loop cost 0.0000012 ETH**, about 0.0000001 per transaction. A full
+four-scene demo runs roughly fifteen transactions, so budget 0.0000015 ETH — and
+then note that a single 0.005 ETH faucet claim covers that three thousand times
+over. An earlier version of this page warned that gas "cannot be done on the
+day". That was wrong by two orders of magnitude and cost a day of waiting for
+nothing.
+
+The one number that does matter is a **threshold, not a cost**: the wizard
+refuses to advance past its ETH step below `ETH_FAUCET_MIN_WEI`, which is
+0.001 ETH. A freshly generated owner wallet therefore needs 0.001 ETH to get
+through step 4, and will then spend almost none of it.
+
+Do not make the recording depend on the web faucet. It is the only step that
+waits on somebody else, and the wizard only polls a balance — so sending
+0.001 ETH from any funded address you already control satisfies it identically
+and the poll continues on its own.
+
+Confirm each balance before starting; `giwacard status --gas` reports the owner
+and session key, and the merchant refuses to start if its key is unfunded.
+Ignore the "TOP UP" state it prints against its 0.003/0.002 ETH targets: those
+are comfort budgets sized for twenty purchases, not gates, and the only real
+gate is the per-transaction estimate.
 
 **The contracts are already deployed and verified** — addresses in
 `smartcontracts/deployments/giwa-sepolia.md`. Skip to Scene 1 unless you are
@@ -144,6 +165,26 @@ instantly while the owner's funds sit untouched.
 
 ---
 
+## Pacing — two things that will bite the recording
+
+Both were measured on the first live run. Neither is visible until you are
+already filming.
+
+**Every write pauses for up to 60 seconds waiting for a safe block.** The CLI
+prints `Included in block N. Not yet safe — waiting for the safe block` and then
+sits there, because on GIWA Sepolia `safe` lags far behind `latest` and
+`finalized` does not answer at all. It gives up after 60s and reports the truth.
+Do not let this surprise you mid-take: either cut around it, or — better — talk
+over it, because the pause is your own honesty argument happening live. Record
+per scene rather than in one take, so one bad pause does not cost you nine
+minutes.
+
+**Do not cut immediately after a mint.** The escrow that a mint creates is not
+readable straight away: the public RPC served stale state for **3.8 seconds** on
+the measured run. Read the balance too early and `Escrowed` shows `0`, which
+silently destroys the single most important beat in scene 2. Leave four seconds,
+or poll until it moves, before you show the number.
+
 ## What to say about finality
 
 Somewhere in scene 2, when the confirmation appears in ~200ms, note that this is
@@ -164,6 +205,10 @@ nobody asks.
 | --- | --- | --- |
 | RPC errors mid-run | public endpoint is rate limited and dev-only | clients retry with backoff; switch to the backup RPC and continue |
 | faucet refuses | 24h cooldown | the CLI names the unlock time; use a pre-funded address |
+| wizard polls forever at step 4 | nothing funded the new owner wallet | send it 0.001 ETH from any funded address; the poll only reads a balance |
+| `Available 0 gUSD` right after onboarding | the faucet pays the wallet, the vault is separate | `giwacard deposit 50`. This is expected, not a fault |
+| `Escrowed 0` right after a mint | stale read, not a missing escrow | wait ~4s and read again; see Pacing above |
+| `npx giwacard <cmd>` says "Unknown command" | npm is serving an older version than this checkout | publish, or run `node giwacard/dist/cli.js` for a rehearsal |
 | merchant will not start | its key is unfunded or misconfigured | the startup error names which |
 | approval never appears | daemon not running | any CLI or MCP call auto-starts it; `giwacard status` confirms |
 | explorer shows no "Read as Proxy" | implementation not verified | verify the implementation, then the proxy |
