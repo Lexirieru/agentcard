@@ -221,6 +221,7 @@ describe('toMcpError', () => {
  */
 const REAL_CLI_COMMANDS: ReadonlySet<string> = new Set([
   'init',
+  'deposit',
   'status',
   'approve',
   'revoke',

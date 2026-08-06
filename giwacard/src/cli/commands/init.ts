@@ -51,6 +51,7 @@ import {
   readFaucetAvailableAt,
   readPaymentToken,
   readTokenBalance,
+  readVaultBalances,
 } from '../vault.js'
 import {
   completeStep,
@@ -184,8 +185,49 @@ export async function runInitCommand(
     { label: 'Merchants', value: (run.state.merchants ?? []).join(', ') || '(none)' },
     { label: 'Keystore', value: keystorePath(runtime.keystoreOptions) },
   ])
-  runtime.output.line('Next: `giwacard status`, then ask your agent to buy something.')
+  await reportNextStep(run)
   return 0
+}
+
+/**
+ * Tell the user what to actually do next, based on what the vault holds.
+ *
+ * This used to be a fixed line reading "then ask your agent to buy something",
+ * which was wrong for every first-time user: the wizard claims gUSD into the
+ * *wallet*, cards are backed by the *vault*, and nothing had moved funds
+ * between them yet. The agent's first mint then failed on an available balance
+ * of zero. A closing instruction that cannot work is worse than none, because
+ * the user trusts it and blames themselves.
+ *
+ * The balance read is best-effort: a flaky RPC at the very end of a successful
+ * onboarding must not turn it into a failure, so a read that throws falls back
+ * to naming the deposit step unconditionally.
+ */
+async function reportNextStep(run: WizardRun): Promise<void> {
+  const { output } = run.runtime
+  const owner = run.state.ownerAddress
+  const vault = run.state.vaultAddress
+
+  let funded = false
+  if (owner && vault) {
+    try {
+      const balances = await readVaultBalances(run.runtime.chain.publicClient(), vault, owner)
+      funded = balances.available > 0n
+    } catch {
+      funded = false
+    }
+  }
+
+  if (funded) {
+    output.line('Next: `giwacard status`, then ask your agent to buy something.')
+    return
+  }
+
+  output.line(
+    'Your vault is empty, so your agent cannot mint anything yet. The gUSD you ' +
+      'just claimed is in your wallet; cards are backed by the vault balance.',
+  )
+  output.line('Next: `giwacard deposit 50`, then ask your agent to buy something.')
 }
 
 /* -------------------------------------------------------------------------- */

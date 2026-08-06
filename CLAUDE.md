@@ -41,10 +41,12 @@ merchant-submitted charge, the report, and escrow release. Transactions are in
   prompts for the passphrase unconditionally and ignores `$GIWACARD_PASSPHRASE`,
   which the help text advertises for exactly this case. Only the *resume* branch
   honours it. CI, containers and headless hosts all dead-end here.
-- **Onboarding finishes with an empty vault and no way to fill it.** There is no
-  `deposit` in the CLI or in the MCP tools — only in the dashboard — yet the
-  wizard signs off with "ask your agent to buy something". The agent cannot buy
-  anything; available balance is zero.
+- **Onboarding finished with an empty vault and no way to fill it.** Fixed:
+  `giwacard deposit <amount>` now exists, the wizard reads the vault balance and
+  names it when the vault is empty, and `INSUFFICIENT_AVAILABLE_BALANCE` tells
+  the agent which owner command fixes it. Deposit is deliberately **not** an MCP
+  tool — it needs the owner key, and the MCP server holds a session key exactly
+  so a compromised agent cannot reach the owner's wallet.
 - **Read-after-write against the public RPC is stale for about a second.** The
   escrow moment, which is the whole point of the mint, reads as zero if you look
   immediately. Poll, or read Flashblocks. Do not screenshot the first response.

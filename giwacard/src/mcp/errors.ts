@@ -189,8 +189,10 @@ export function insufficientAvailableBalanceError(
   return new McpToolError(
     'INSUFFICIENT_AVAILABLE_BALANCE',
     `The vault has ${available} available but this card needs ${required} ` +
-      '(base units). Funds locked behind active cards do not count — cancel an ' +
-      'unused card, or ask the vault owner to deposit more.',
+      '(base units). Funds locked behind active cards do not count — ask the ' +
+      'vault owner to run `giwacard deposit <amount>`, or to cancel an unused ' +
+      'card with `giwacard revoke card <id>`. Both are owner actions; you ' +
+      'cannot do either yourself.',
     {
       details: {
         available: available.toString(),

@@ -199,6 +199,31 @@ export async function readTokenBalance(
 }
 
 /**
+ * Read how much of `owner`'s gUSD `spender` is currently allowed to pull.
+ *
+ * `giwacard deposit` reads this to decide whether it owes an `approve` before
+ * the deposit itself. A standing allowance from an earlier top-up makes the
+ * second transaction unnecessary, and re-approving costs gas to change nothing.
+ */
+export async function readTokenAllowance(
+  publicClient: CliPublicClient,
+  token: Address,
+  owner: Address,
+  spender: Address,
+): Promise<bigint> {
+  return withCliRetry(
+    () =>
+      publicClient.readContract({
+        address: token,
+        abi: gusdAbi,
+        functionName: 'allowance',
+        args: [owner, spender],
+      }) as Promise<bigint>,
+    { label: 'read the vault gUSD allowance' },
+  )
+}
+
+/**
  * Read the earliest second at which `account` may claim from the gUSD faucet.
  *
  * `0` means "never claimed, may claim now" — see `GUSD.faucetAvailableAt`.

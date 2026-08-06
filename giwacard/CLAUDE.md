@@ -57,7 +57,7 @@ preflight. This is what stops any page in the owner's browser driving the queue.
 running while the daemon is down would leave requests wrongly pending forever.
 
 **Error messages may only name commands that exist.** The real surface is
-`init | status | approve | revoke key|card | faucet | daemon | mcp`. `src/mcp/errors.ts`
+`init | deposit | status | approve | revoke key|card | faucet | daemon | mcp`. `src/mcp/errors.ts`
 records that list as a contract with tests asserting it — three phantom commands
 shipped before that existed. Two easy mistakes: `giwacard faucet` claims **gUSD**,
 so it is never the answer to a gas shortfall; and cancelling is

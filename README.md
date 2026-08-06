@@ -219,11 +219,12 @@ uses the field name that introduced the value and fails closed on anything unrec
 
 ```bash
 npx giwacard                    # wizard: wallet, vault, faucets, session key, policy
+giwacard deposit 50             # move gUSD into the vault — cards are backed by this
 giwacard status                 # balance, escrow, cards, pending approvals
 giwacard approve                # review an over-policy request and sign it
 giwacard revoke key <address>   # kill a session key instantly
 giwacard revoke card <id>       # cancel one card
-giwacard faucet                 # claim gUSD
+giwacard faucet                 # claim gUSD into your wallet
 ```
 
 Plus a **Next.js dashboard** — approval queue, cards, balance, transaction history — with wallet

@@ -54,6 +54,13 @@ be visited before anything can be minted:
 The wizard funds the session key's gas out of the owner wallet, so only the owner
 address needs to visit the ETH faucet.
 
+**Claimed gUSD is not yet spendable.** The faucet pays into the owner's *wallet*;
+cards are backed by the *vault* balance, and the two are different places. Move
+funds across with `giwacard deposit <amount>` before asking the agent to buy
+anything, or its first mint fails on an available balance of zero. `giwacard
+status` reports the vault side, so a wallet full of gUSD and an `Available` line
+reading `0 gUSD` is the expected state right after onboarding, not a fault.
+
 **Two addresses you must obtain before you start.** There are no defaults, on
 purpose — a wrong-but-plausible vault address would send a deposit to a contract
 that is not the vault.

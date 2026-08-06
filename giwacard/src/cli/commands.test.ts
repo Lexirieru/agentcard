@@ -8,6 +8,7 @@ import { privateKeyToAddress } from 'viem/accounts'
 import { CardStatus } from '../chain/cardVaultAbi.js'
 import { saveKeystore, type KeystoreOptions } from '../chain/keystore.js'
 import { runApproveCommand } from './commands/approve.js'
+import { parseGusdAmount, runDepositCommand } from './commands/deposit.js'
 import { runFaucetCommand } from './commands/faucet.js'
 import { runRevokeCommand } from './commands/revoke.js'
 import { runStatusCommand } from './commands/status.js'
@@ -142,6 +143,7 @@ describe('a command on a machine with no keystore', () => {
     ['status', (runtime) => runStatusCommand(runtime)],
     ['approve', (runtime) => runApproveCommand(runtime)],
     ['faucet', (runtime) => runFaucetCommand(runtime)],
+    ['deposit', (runtime) => runDepositCommand(runtime, { amount: '50' })],
     [
       'revoke card',
       (runtime) => runRevokeCommand(runtime, { subject: 'card', target: '1' }),
@@ -234,6 +236,122 @@ describe('giwacard faucet', () => {
       (caught: unknown) => caught,
     )) as CliError
     expect(error.message).toContain('1m 30s from now')
+  })
+})
+
+/* ========================================================================== */
+/* deposit                                                                    */
+/* ========================================================================== */
+
+describe('parseGusdAmount', () => {
+  test('accepts whole and fractional amounts', () => {
+    expect(parseGusdAmount('50')).toBe(50_000_000n)
+    expect(parseGusdAmount('50.5')).toBe(50_500_000n)
+    expect(parseGusdAmount('0.25')).toBe(250_000n)
+    expect(parseGusdAmount('  10  ')).toBe(10_000_000n)
+    expect(parseGusdAmount('0.000001')).toBe(1n)
+  })
+
+  test('rejects rather than rounds an amount finer than gUSD can hold', () => {
+    // Truncating would move a different amount of money than the one typed.
+    const error = (() => {
+      try {
+        parseGusdAmount('0.1234567')
+      } catch (caught) {
+        return caught as CliError
+      }
+      return null
+    })()
+    expect(error).toBeInstanceOf(CliError)
+    expect(error?.code).toBe('INVALID_ARGUMENT')
+    expect(error?.message).toContain('6 decimal places')
+  })
+
+  test('rejects zero, negatives and non-numbers', () => {
+    for (const bad of ['0', '0.000000', '-5', 'fifty', '', '1e6', '5.']) {
+      expect(() => parseGusdAmount(bad)).toThrow(CliError)
+    }
+  })
+})
+
+describe('giwacard deposit', () => {
+  /** A chain where the owner holds 100 gUSD and has approved the vault for nothing. */
+  function depositChain(): FakeChain {
+    return seededChain()
+      .setRead(`balanceOf:${OWNER.toLowerCase()}`, 100_000_000n)
+      .setRead('allowance', 0n)
+  }
+
+  test('moves gUSD into the vault, approving first', async () => {
+    seedKeystore()
+    const chain = depositChain()
+    const runtime = runtimeWith({ chain })
+
+    const code = await runDepositCommand(runtime, { amount: '50', yes: true })
+
+    expect(code).toBe(0)
+    expect(chain.writesTo('approve')).toHaveLength(1)
+    expect(chain.writesTo('approve')[0]?.args).toEqual([VAULT, 50_000_000n])
+    expect(chain.writesTo('deposit')).toHaveLength(1)
+    expect(chain.writesTo('deposit')[0]?.args).toEqual([50_000_000n])
+    // Both go out as the owner. The session key must never move the owner's funds.
+    expect(chain.writesTo('deposit')[0]?.from).toBe(OWNER)
+  })
+
+  test('skips the approval when a standing allowance already covers it', async () => {
+    seedKeystore()
+    const chain = depositChain().setRead('allowance', 80_000_000n)
+    const runtime = runtimeWith({ chain })
+
+    await runDepositCommand(runtime, { amount: '50', yes: true })
+
+    expect(chain.writesTo('approve')).toHaveLength(0)
+    expect(chain.writesTo('deposit')).toHaveLength(1)
+  })
+
+  test('refuses an amount the wallet does not hold, and sends nothing', async () => {
+    seedKeystore()
+    const chain = depositChain().setRead(`balanceOf:${OWNER.toLowerCase()}`, 10_000_000n)
+    const runtime = runtimeWith({ chain })
+
+    const error = (await runDepositCommand(runtime, { amount: '50', yes: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError
+
+    expect(error).toBeInstanceOf(CliError)
+    expect(error.code).toBe('INVALID_ARGUMENT')
+    expect(error.message).toContain('Nothing was sent')
+    // `giwacard faucet` claims gUSD, so it is the right remedy here.
+    expect(error.hint).toContain('giwacard faucet')
+    expect(chain.writes).toHaveLength(0)
+  })
+
+  test('a missing amount is an error, not a default', async () => {
+    seedKeystore()
+    const chain = depositChain()
+    const runtime = runtimeWith({ chain })
+
+    const error = (await runDepositCommand(runtime).catch(
+      (caught: unknown) => caught,
+    )) as CliError
+
+    expect(error).toBeInstanceOf(CliError)
+    expect(error.code).toBe('INVALID_ARGUMENT')
+    expect(error.hint).toContain('giwacard deposit <amount>')
+    expect(chain.writes).toHaveLength(0)
+  })
+
+  test('declining at the confirmation deposits nothing', async () => {
+    seedKeystore()
+    const chain = depositChain()
+    const prompter = new ScriptedPrompter([{ kind: 'confirm', value: false }])
+    const runtime = runtimeWith({ chain, prompter })
+
+    const code = await runDepositCommand(runtime, { amount: '50' })
+
+    expect(code).toBe(0)
+    expect(chain.writes).toHaveLength(0)
+    expect(runtime.output.stdout).toContain('Nothing deposited.')
   })
 })
 

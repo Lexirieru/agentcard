@@ -2,6 +2,7 @@ import { keystoreExists, keystorePath } from '../chain/keystore.js'
 import { VERSION } from '../version.js'
 import { bannerText } from './banner.js'
 import { runApproveCommand } from './commands/approve.js'
+import { runDepositCommand } from './commands/deposit.js'
 import { runFaucetCommand } from './commands/faucet.js'
 import { runInitCommand } from './commands/init.js'
 import { runRevokeCommand } from './commands/revoke.js'
@@ -85,6 +86,7 @@ Usage: giwacard <command> [options]
 
 Commands
   init                    Set up your wallet, vault, session key and agent (resumable)
+  deposit <amount>        Move gUSD from your wallet into the vault, so cards have backing
   status                  Balance, escrowed, available, active cards, pending approvals
   approve                 Review over-policy card requests and sign or deny them
   revoke key <address>    Deactivate a session key. Cards it already minted STAY ACTIVE.
@@ -224,6 +226,14 @@ export async function runCli(options: RunCliOptions = {}): Promise<number> {
 
       case 'faucet':
         return await runFaucetCommand(runtime, {
+          yes: parsed.flags['yes'] === true,
+        })
+
+      case 'deposit':
+        return await runDepositCommand(runtime, {
+          ...(parsed.positional[0] !== undefined
+            ? { amount: parsed.positional[0] }
+            : {}),
           yes: parsed.flags['yes'] === true,
         })
 

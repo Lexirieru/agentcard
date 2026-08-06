@@ -72,6 +72,17 @@ mint nothing at all. This is the moment the audience learns the limits are real.
 Interrupt the wizard partway and re-run it, to show it resumes at the first
 incomplete step rather than starting over. Optional, but it lands well.
 
+Then fund the vault, which the wizard does not do for you:
+
+```bash
+giwacard deposit 50
+```
+
+Say why this is a separate step rather than glossing over it: the faucet pays
+gUSD into the **wallet**, and cards are backed by the **vault**. The wizard ends
+by naming this command precisely because its own last screen used to send people
+off to buy things with an empty vault.
+
 ---
 
 ## Scene 2 — a purchase inside policy (AE1, flow F2)
