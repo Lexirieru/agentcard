@@ -95,6 +95,9 @@ function fakeWallet(onWrite?: () => void): CliWalletClient {
       onWrite?.()
       return HASH
     },
+    // `sendTx` never reaches for this — only the wizard's session-key top-up
+    // does — but the interface requires it.
+    sendTransaction: async () => HASH,
   }
 }
 

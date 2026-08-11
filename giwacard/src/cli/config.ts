@@ -65,6 +65,26 @@ export const SESSION_KEY_GAS_TARGET_WEI = 2_000_000_000_000_000n
 /** The owner's own gas floor: approval mints, revocations, cancels, deposits. */
 export const OWNER_GAS_TARGET_WEI = 3_000_000_000_000_000n
 
+/**
+ * ETH the wizard leaves in the owner wallet when topping up the session key.
+ *
+ * The owner still has to pay for deposits, approvals, cancellations and
+ * revocations, so the top-up may not empty it. 0.0005 ETH is deliberately
+ * generous against measured cost: a transaction on GIWA Sepolia settled for
+ * about 0.0000001 ETH, so this reserve is roughly five thousand of them.
+ */
+export const OWNER_GAS_RESERVE_WEI = 500_000_000_000_000n
+
+/**
+ * Smallest top-up worth sending to the session key.
+ *
+ * Below this the transfer costs a transaction to deliver too little to matter,
+ * and the honest answer is to tell the owner their wallet is too thin rather
+ * than to spend gas pretending otherwise. At measured rates this floor is still
+ * about a thousand mints.
+ */
+export const SESSION_KEY_GAS_MIN_TOPUP_WEI = 100_000_000_000_000n
+
 /** Default session policy the wizard proposes. Amounts in gUSD base units. */
 export const DEFAULT_POLICY = {
   /** 10 gUSD per card. */

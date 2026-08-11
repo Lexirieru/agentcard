@@ -5,7 +5,7 @@ program: GASOK — GIWA Accelerator for Sustainable On-chain Kernel
 program_url: https://giwa.io/gasok
 tracks: AI/WEB3 (primary), GIWA-NATIVE IDEAS (secondary)
 date: 2026-08-01
-status: DRAFT — not submitted
+status: SUBMITTED 2026-08-02 — evaluated until 2026-08-14
 origin: docs/plans/2026-08-01-001-feat-giwacard-mvp-plan.md (U12), docs/brainstorms/2026-08-01-giwa-agent-card-requirements.md
 ---
 
@@ -15,7 +15,9 @@ origin: docs/plans/2026-08-01-001-feat-giwacard-mvp-plan.md (U12), docs/brainsto
 
 This document is a draft of the answers for the GASOK application form. It is English-only, and its text is what is intended for submission. Anything the applicant still has to supply is marked `[FILL: ...]` — **this document must not be submitted while any placeholder remains.** All achievement figures, team size, and traction numbers are deliberately left blank rather than invented. The full list of what the applicant must supply is in Section 9.
 
-**Application status note.** The extended application deadline was 31 July 2026 and has lapsed as of 1 August 2026. The program page does not state that applications are closed and does state that new applications are accepted during Phase 2. Section 8 contains an explicit request to confirm eligibility.
+**Application status note.** Submitted on **2 August 2026** under Track 04 AI/WEB3. GIWA acknowledged receipt on 6 August and treats the submission as **Phase 3** — Phase 1 and Phase 2 were run as one integrated stage. The evaluation period runs **until 14 August 2026**, with the result announced that day by individual email either way. Phase 3 itself runs August to September and is judged on UI/UX, evidence of early user acquisition, and long-term viability, with a demo day at Korea Blockchain Week in October.
+
+**What this document is now.** The form was submitted with answers written separately; this file is the working draft behind them. Its remaining `[FILL: ...]` placeholders are therefore no longer blocking anything — nobody on the committee reads this file. Keep it accurate as a record, not as a deliverable.
 
 ---
 
@@ -106,7 +108,7 @@ GiwaCard has four layers, all of which are publicly inspectable.
   - **Mint** [`0x36c3aa76…cfd9602a`](https://sepolia-explorer.giwa.io/tx/0x36c3aa762f7901cda9a3dce7d1c80494cc256ce1b79bc8d196eb3064cfd9602a) — card 1, cap 5 gUSD, scoped to the merchant, one-hour expiry. Escrow moved by the **cap**, not the price.
   - **Charge** [`0x0a9fb47c…a4a51958`](https://sepolia-explorer.giwa.io/tx/0x0a9fb47c699f58bd261476d08d050fda1fac78843e6470783457ff55a4a51958) — `CardCharged`, 1 gUSD taken, 4 gUSD released. Note the sender: `0x5009…b6cA`, the **merchant**, not the agent's session key. The agent handed over a card; it never submitted the payment.
 
-  Three further claims were checked in the same run rather than asserted. A second charge of the same card was refused (`CARD_ALREADY_USED`). A 15 gUSD request against a 10 gUSD per-card cap produced an approval request and **no transaction at all** — no funds moved. A card scoped to a merchant outside the allowlist was refused outright and, by design, could not be rescued by owner approval either. Every step is also covered by the test suite (960 tests across the four packages).
+  Three further claims were checked in the same run rather than asserted. A second charge of the same card was refused (`CARD_ALREADY_USED`). A 15 gUSD request against a 10 gUSD per-card cap produced an approval request and **no transaction at all** — no funds moved. A card scoped to a merchant outside the allowlist was refused outright and, by design, could not be rescued by owner approval either. Every step is also covered by the test suite (994 tests across the four packages).
 
 **We do not claim a finished MVP.** As of the date of this application, the components not yet complete are `[FILL: components still in progress — e.g. dashboard, CLI wizard, npm publication]`. We say so explicitly, because an unverifiable readiness claim would undermine the credibility of the entire application.
 

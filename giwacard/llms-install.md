@@ -52,7 +52,11 @@ be visited before anything can be minted:
 | gUSD (the money) | `giwacard faucet`, which calls `GUSD.claimFaucet()` onchain | 100 gUSD per address per 24h |
 
 The wizard funds the session key's gas out of the owner wallet, so only the owner
-address needs to visit the ETH faucet.
+address needs to visit the ETH faucet. It tops the key up to 0.002 ETH and always
+leaves 0.0005 ETH behind for the owner's own deposits and approvals, so a thin
+wallet produces a partial top-up rather than a stranded owner. The step is safe
+to repeat: re-running `giwacard init` tops the key up again if it has run dry,
+which is exactly what the `NO_GAS` error tells you to do.
 
 **Claimed gUSD is not yet spendable.** The faucet pays into the owner's *wallet*;
 cards are backed by the *vault* balance, and the two are different places. Move

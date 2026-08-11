@@ -35,7 +35,9 @@ import {
 } from '../chain.js'
 import {
   DEFAULT_POLICY,
+  OWNER_GAS_RESERVE_WEI,
   OWNER_GAS_TARGET_WEI,
+  SESSION_KEY_GAS_MIN_TOPUP_WEI,
   SESSION_KEY_GAS_TARGET_WEI,
 } from '../config.js'
 import { unsealKeystore, type CliRuntime } from '../context.js'
@@ -108,6 +110,16 @@ export const ETH_FAUCET_POLL_INTERVAL_MS = 5_000
 
 /** Minimum owner ETH balance the wizard treats as "the faucet arrived". */
 export const ETH_FAUCET_MIN_WEI = 1_000_000_000_000_000n
+
+/**
+ * How many times the session-key top-up re-reads the balance before giving up
+ * on seeing its own transfer. Six attempts at 500ms covers the ~1s the public
+ * RPC was measured to lag by, with room to spare.
+ */
+export const TOPUP_VISIBLE_POLL_ATTEMPTS = 6
+
+/** Gap between those re-reads. */
+export const TOPUP_VISIBLE_POLL_INTERVAL_MS = 500
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
@@ -589,6 +601,11 @@ async function stepSessionKey(run: WizardRun): Promise<void> {
       commit(run, 'session-key', { sessionAddress: recorded })
     }
     skipping(run, 'session-key', recorded)
+    // Deliberately still funds on the resume path. The step is "the session key
+    // has gas", not "a session key was generated once", and `NO_GAS` tells the
+    // user to re-run `giwacard init` to fix exactly this — advice that is only
+    // true if a resumed run still tops the key up.
+    await fundSessionKey(run, recorded)
     await printGasBudget(run)
     return
   }
@@ -606,7 +623,107 @@ async function stepSessionKey(run: WizardRun): Promise<void> {
   ])
 
   commit(run, 'session-key', { sessionAddress: address })
+  await fundSessionKey(run, address)
   await printGasBudget(run)
+}
+
+/**
+ * Top the session key up with gas out of the owner wallet.
+ *
+ * The wizard has always *claimed* to do this — the step is documented as "fund
+ * its gas" and the install runbook told users only the owner needed the ETH
+ * faucet — but it only ever printed a budget table saying the key was empty.
+ * Onboarding therefore reported success and the agent's very first `mint_card`
+ * failed with `NO_GAS`, pointing the user at a remedy that did not exist.
+ *
+ * Three rules make this safe to run on every invocation:
+ *
+ * - It funds up to a target and never past it, so a resumed wizard is a no-op
+ *   once the key is healthy.
+ * - It never empties the owner. {@link OWNER_GAS_RESERVE_WEI} stays behind,
+ *   because the owner still pays for deposits, approvals and revocations, and
+ *   an owner stranded without gas is a worse failure than an underfunded agent.
+ * - A transfer too small to be worth its own gas is refused out loud rather
+ *   than sent, so the user learns their wallet is thin instead of watching a
+ *   transaction accomplish nothing.
+ *
+ * Failure here is reported, not thrown. Onboarding has done real work by this
+ * point, and losing all of it to a flaky transfer would be a poor trade when
+ * the remedy is one more run.
+ */
+async function fundSessionKey(run: WizardRun, session: Address): Promise<void> {
+  const owner = run.state.ownerAddress
+  const ownerKey = run.data.ownerPrivateKey
+  if (!owner || !ownerKey) return
+
+  const publicClient = run.runtime.chain.publicClient()
+
+  let ownerBalance: bigint
+  let sessionBalance: bigint
+  try {
+    ownerBalance = await withCliRetry(
+      () => publicClient.getBalance({ address: owner }),
+      { label: 'read the owner ETH balance' },
+    )
+    sessionBalance = await withCliRetry(
+      () => publicClient.getBalance({ address: session }),
+      { label: 'read the session key ETH balance' },
+    )
+  } catch {
+    return
+  }
+
+  const shortfall = SESSION_KEY_GAS_TARGET_WEI - sessionBalance
+  if (shortfall <= 0n) return
+
+  const spare =
+    ownerBalance > OWNER_GAS_RESERVE_WEI ? ownerBalance - OWNER_GAS_RESERVE_WEI : 0n
+  const amount = shortfall < spare ? shortfall : spare
+
+  if (amount < SESSION_KEY_GAS_MIN_TOPUP_WEI) {
+    run.runtime.output.line(
+      `The session key needs gas and the owner wallet cannot spare it: it holds ` +
+        `${formatEth(ownerBalance)} ETH and ${formatEth(OWNER_GAS_RESERVE_WEI)} ETH ` +
+        'has to stay behind for your own deposits and approvals.',
+    )
+    run.runtime.output.line(
+      `Top the owner up from ${run.runtime.config.ethFaucetUrl}, then re-run ` +
+        '`giwacard init` — this step funds the session key and is safe to repeat.',
+    )
+    return
+  }
+
+  const spinner = run.runtime.prompter.spinner()
+  spinner.start(`Funding the session key with ${formatEth(amount)} ETH`)
+  try {
+    const wallet = run.runtime.chain.wallet(ownerKey)
+    const hash = await wallet.sendTransaction({ to: session, value: amount })
+    await withCliRetry(
+      () => publicClient.waitForTransactionReceipt({ hash }),
+      { label: 'wait for the session key top-up' },
+    )
+    // The public RPC serves stale reads for about a second after a write, and
+    // the gas-budget table is printed immediately after this returns. Without
+    // this wait the wizard says "Session key funded" and then, one line later,
+    // prints a table claiming the key holds 0 ETH and needs a top-up — the
+    // output contradicting itself in the two lines a user reads most closely.
+    for (let attempt = 0; attempt < TOPUP_VISIBLE_POLL_ATTEMPTS; attempt++) {
+      const seen = await publicClient
+        .getBalance({ address: session })
+        .catch(() => sessionBalance)
+      if (seen > sessionBalance) break
+      await sleep(TOPUP_VISIBLE_POLL_INTERVAL_MS)
+    }
+
+    spinner.stop(`Session key funded with ${formatEth(amount)} ETH.`)
+    run.runtime.output.line(`Transaction: ${giwaSepoliaExplorer.tx(hash)}`)
+  } catch {
+    spinner.stop('Could not fund the session key.', 1)
+    run.runtime.output.line(
+      'Onboarding continues — nothing already done is lost. Re-run `giwacard ' +
+        'init` to retry the top-up, or send ETH to the session key address above.',
+    )
+  }
 }
 
 /** Print the KTD-6 budget table and warn about any underfunded submitter. */

@@ -202,6 +202,8 @@ export interface FakeChainState {
   gas: bigint
   receipt: CliReceipt
   safeBlock: bigint
+  /** Balance reported for any address `balances` does not name. */
+  defaultBalance: bigint
 }
 
 /** A fake chain: deterministic reads, recorded writes, no network. */
@@ -224,6 +226,10 @@ export class FakeChain implements ChainFactory {
           logs: [],
         } satisfies CliReceipt),
       safeBlock: overrides.safeBlock ?? 100n,
+      // A comfortable default so the gas preflight passes in every test that
+      // does not care about balances. Tests about funding set it to 0n, or a
+      // freshly generated address looks rich and no top-up is attempted.
+      defaultBalance: overrides.defaultBalance ?? 10n ** 18n,
     }
   }
 
@@ -236,6 +242,12 @@ export class FakeChain implements ChainFactory {
   /** Seed a native balance. */
   setBalance(address: string, wei: bigint): this {
     this.state.balances.set(address.toLowerCase(), wei)
+    return this
+  }
+
+  /** Balance reported for addresses that were never seeded. */
+  setDefaultBalance(wei: bigint): this {
+    this.state.defaultBalance = wei
     return this
   }
 
@@ -258,7 +270,7 @@ export class FakeChain implements ChainFactory {
         )
       },
       getBalance: async ({ address }) =>
-        this.state.balances.get(address.toLowerCase()) ?? 10n ** 18n,
+        this.state.balances.get(address.toLowerCase()) ?? this.state.defaultBalance,
       getGasPrice: async () => this.state.gasPrice,
       estimateContractGas: async () => this.state.gas,
       waitForTransactionReceipt: async () => this.state.receipt,
@@ -286,6 +298,22 @@ export class FakeChain implements ChainFactory {
           args: args.args ?? [],
           from: address,
         })
+        return this.state.receipt.transactionHash
+      },
+      sendTransaction: async (args: { to: Address; value: bigint }) => {
+        // Recorded as a write named `sendTransaction` so `writesTo` finds it
+        // like any other, and the value is carried in `args` so a test can
+        // assert the amount rather than only the fact of a transfer.
+        this.writes.push({
+          address: args.to,
+          functionName: 'sendTransaction',
+          args: [args.value],
+          from: address,
+        })
+        this.state.balances.set(
+          args.to.toLowerCase(),
+          (this.state.balances.get(args.to.toLowerCase()) ?? 0n) + args.value,
+        )
         return this.state.receipt.transactionHash
       },
     }

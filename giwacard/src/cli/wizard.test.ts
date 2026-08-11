@@ -301,12 +301,103 @@ describe('the wizard never deploys (KTD-17)', () => {
 
     expect(runtime.output.stdout).toContain('Attached')
     expect(runtime.output.stdout).toContain(VAULT)
-    // Every write goes to a pre-existing address; nothing is deployed.
-    for (const write of chain.writes) {
+    // Every *contract* call goes to a pre-existing address; nothing is deployed.
+    // Plain value transfers are excluded: the session-key top-up sends ETH to an
+    // EOA, which is not a deployment.
+    for (const write of chain.writes.filter(
+      (w) => w.functionName !== 'sendTransaction',
+    )) {
       expect([VAULT, TOKEN]).toContain(write.address)
     }
     expect(persistedState().vaultAddress).toBe(VAULT)
     expect(persistedState().tokenAddress).toBe(TOKEN)
+  })
+})
+
+describe('the session-key step funds the key it creates', () => {
+  /** All eight steps except the session key, so the wizard resumes into it. */
+  const UP_TO_SESSION: WizardStepId[] = [
+    'passphrase',
+    'owner-wallet',
+    'vault-attach',
+    'eth-faucet',
+    'gusd-faucet',
+  ]
+
+  /** The transfers the wizard made, as (to, value) pairs. */
+  function topUps(chain: FakeChain) {
+    return chain
+      .writesTo('sendTransaction')
+      .map((w) => ({ to: w.address, value: w.args[0] as bigint }))
+  }
+
+  /**
+   * A chain where nothing is funded unless a test says so.
+   *
+   * The default 1 ETH would make a freshly generated session key look rich, and
+   * every top-up assertion would silently pass by doing nothing.
+   */
+  function fundingChain(ownerWei: bigint): FakeChain {
+    return wizardChain().setDefaultBalance(0n).setBalance(OWNER, ownerWei)
+  }
+
+  test('tops the new key up to target out of the owner wallet', async () => {
+    seedInterrupted(UP_TO_SESSION)
+    const chain = fundingChain(10_000_000_000_000_000n) // 0.01
+    const runtime = wizardRuntime({ chain })
+
+    await runInitCommand(runtime, { yes: true })
+
+    const sent = topUps(chain)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.value).toBe(2_000_000_000_000_000n) // the 0.002 target
+    expect(sent[0]?.to).toBe(persistedState().sessionAddress as Address)
+    // The outcome that was broken: onboarding now ends with both submitters
+    // able to pay, rather than a budget table telling the user to TOP UP.
+    expect(runtime.output.stdout).toContain('Both submitters are funded')
+    expect(runtime.output.stdout).not.toContain('TOP UP')
+  })
+
+  test('never empties the owner — the reserve stays behind', async () => {
+    // 0.0015 ETH: past the wizard's own faucet gate but under the session
+    // target, so the owner cannot fully fund it. This is the case a thin
+    // wallet actually produces, and the one the first live run hit.
+    seedInterrupted(UP_TO_SESSION)
+    const chain = fundingChain(1_500_000_000_000_000n)
+    const runtime = wizardRuntime({ chain })
+
+    await runInitCommand(runtime, { yes: true })
+
+    const sent = topUps(chain)
+    expect(sent).toHaveLength(1)
+    // 0.0015 held, 0.0005 reserved, so 0.001 is all it may send.
+    expect(sent[0]?.value).toBe(1_000_000_000_000_000n)
+  })
+
+  test('a key that already has gas is left alone', async () => {
+    seedInterrupted([...UP_TO_SESSION, 'session-key'])
+    const chain = fundingChain(10_000_000_000_000_000n)
+    chain.setBalance(SESSION, 2_000_000_000_000_000n) // already at target
+    const runtime = wizardRuntime({ chain })
+
+    await runInitCommand(runtime, { yes: true })
+
+    expect(topUps(chain)).toHaveLength(0)
+  })
+
+  test('a resumed wizard still tops up, because NO_GAS tells users to re-run it', async () => {
+    // The whole wizard already finished, and the session key is flat. Re-running
+    // `giwacard init` is the remedy `NO_GAS` names, so it has to work.
+    seedInterrupted([...UP_TO_SESSION, 'session-key', 'policy', 'agent-config'])
+    const chain = fundingChain(10_000_000_000_000_000n)
+    const runtime = wizardRuntime({ chain })
+
+    await runInitCommand(runtime, { yes: true })
+
+    const sent = topUps(chain)
+    expect(sent).toHaveLength(1)
+    expect(sent[0]?.to).toBe(SESSION)
+    expect(sent[0]?.value).toBe(2_000_000_000_000_000n)
   })
 })
 

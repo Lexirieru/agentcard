@@ -79,6 +79,14 @@ export interface CliWalletClient {
     functionName: string
     args?: readonly unknown[]
   }): Promise<Hex>
+  /**
+   * Plain value transfer, with no contract behind it.
+   *
+   * Used by exactly one caller: the wizard topping the session key up out of
+   * the owner wallet. Every other write in this CLI goes through
+   * {@link sendTx}, which needs an ABI and a function name.
+   */
+  sendTransaction(args: { to: Address; value: bigint }): Promise<Hex>
 }
 
 /**

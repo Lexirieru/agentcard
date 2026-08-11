@@ -12,7 +12,8 @@ contract. Anything outside those limits stops and waits for a human.
 
 [![Network](https://img.shields.io/badge/GIWA_Sepolia-91342-1f6feb?style=for-the-badge)](https://sepolia-explorer.giwa.io)
 [![Contracts](https://img.shields.io/badge/contracts-verified-2ea043?style=for-the-badge)](https://sepolia-explorer.giwa.io/address/0xD89395Df78aaFdF86b330899d1C6189211e88750)
-[![Tests](https://img.shields.io/badge/tests-960_passing-2ea043?style=for-the-badge)](#verify-it-yourself)
+[![Tests](https://img.shields.io/badge/tests-994_passing-2ea043?style=for-the-badge)](#verify-it-yourself)
+[![npm](https://img.shields.io/npm/v/giwacard?style=for-the-badge&color=1f6feb)](https://www.npmjs.com/package/giwacard)
 [![Live](https://img.shields.io/badge/demo-live-2ea043?style=for-the-badge)](https://agentcard-eta.vercel.app)
 
 **[Live site](https://agentcard-eta.vercel.app)** ·
@@ -35,6 +36,26 @@ The industry's answer has been to write better prompts. But a limit that lives i
 limit the model can be talked out of.
 
 **Agents don't need a wallet. They need a card.**
+
+---
+
+## ⚡ Try it
+
+Testnet only. Nothing here costs real money, and the gas for a whole run came to
+**0.0000012 ETH** when we measured it.
+
+```bash
+npx giwacard          # wizard: wallet, vault, ETH + gUSD faucets, session key, policy
+giwacard deposit 50   # cards are backed by the vault, not by your wallet
+giwacard status       # balance, escrow, available, cards, pending approvals
+```
+
+Then ask your agent to buy something — the wizard already wrote the MCP server
+into your agent host. Node 22.5+.
+
+The one step people miss: `giwacard faucet` (run for you by the wizard) claims
+gUSD into your **wallet**, while a card is backed by your **vault**. `deposit` is
+what moves it across, and until you do the agent has nothing to spend.
 
 ---
 
@@ -86,7 +107,7 @@ cast call $VAULT "paymentToken()(address)" --rpc-url $RPC   # the gUSD proxy abo
 | Claim | How to check it |
 |---|---|
 | ✅ **The contracts pass** | `cd smartcontracts && forge clean && forge test` — **78 tests**, including cross-owner isolation and a V1→V2 upgrade that asserts storage survives |
-| 🧪 **The whole stack passes** | **960 tests** — 78 contracts, 542 `giwacard`, 215 `merchant`, 125 `frontend` |
+| 🧪 **The whole stack passes** | **994 tests** — 78 contracts, 555 `giwacard`, 215 `merchant`, 146 `frontend` |
 | 🚫 **The agent cannot self-approve** | `cd giwacard && bun test src/mcp/surface.test.ts` — asserted against a live `tools/list` response, not against a constant |
 | 📄 **The docs match the code** | `bun test src/package.test.ts` — every tool the shipped docs name must be one the server advertises |
 | 💰 **Deployment cost** | 0.0000102 ETH, at 0.001 gwei. Gas is not the constraint here |
@@ -354,7 +375,7 @@ We would rather you read this than discover it.
 ## 🗺️ Status & roadmap
 
 **Done:** contracts deployed and verified; CLI, MCP server, approval daemon, Agent Skill, merchant
-API and dashboard all built and tested; 960 tests passing.
+API and dashboard all built and tested; 994 tests passing.
 
 **Not done yet** — stated plainly, because these look finished from the code alone:
 

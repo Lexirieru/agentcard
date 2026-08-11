@@ -49,7 +49,7 @@ Every layer of GiwaCard, shipped and verifiable:
 - **Owner dashboard** — Next.js with Reown AppKit, live on Vercel. 125 tests.
 - **Landing page** — live on Vercel.
 
-Roughly 40,000 lines across Solidity and TypeScript, 960 tests passing, and
+Roughly 40,000 lines across Solidity and TypeScript, 994 tests passing, and
 every contract published for reading rather than described.
 
 #### Core strengths

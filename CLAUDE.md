@@ -35,7 +35,7 @@ State this accurately; several of these look finished from the code alone.
 The end-to-end loop ran on GIWA Sepolia on 2026-08-06 — onboarding, mint, a
 merchant-submitted charge, the report, and escrow release. Transactions are in
 `docs/grant/gasok-application.md` §4.3. Four things it found, none of which the
-960 tests could have:
+994 tests could have:
 
 - **`giwacard init` cannot complete without a terminal.** The first-run branch
   prompts for the passphrase unconditionally and ignores `$GIWACARD_PASSPHRASE`,
@@ -47,9 +47,19 @@ merchant-submitted charge, the report, and escrow release. Transactions are in
   the agent which owner command fixes it. Deposit is deliberately **not** an MCP
   tool — it needs the owner key, and the MCP server holds a session key exactly
   so a compromised agent cannot reach the owner's wallet.
+- **The wizard never funded the session key**, though three places said it did:
+  the step's own docstring, `llms-install.md`, and the remedy inside `NO_GAS`.
+  A new user therefore finished onboarding and hit `NO_GAS` on their agent's
+  first mint, having been told to re-run `init` — which fixed nothing. Fixed by
+  making the step do what it claimed: it tops up to 0.002 ETH, keeps 0.0005 ETH
+  back for the owner, and runs on resume too, so the `NO_GAS` advice is now
+  true. Found by onboarding a throwaway wallet as an outsider, not by the tests.
 - **Read-after-write against the public RPC is stale for about a second.** The
   escrow moment, which is the whole point of the mint, reads as zero if you look
   immediately. Poll, or read Flashblocks. Do not screenshot the first response.
+  This also bit the top-up above: the gas table printed `0 ETH · TOP UP` one
+  line under "Session key funded", so that path now waits for its own write to
+  become visible before printing.
 - **One address in the docs carried a bad EIP-55 checksum** and viem rejected
   it, so anyone copy-pasting the README env block hit a crash on their first
   command. Fixed. Checksum every address you paste into a doc.

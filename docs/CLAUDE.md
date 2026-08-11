@@ -6,7 +6,7 @@ Planning and grant artifacts. No code.
 | --- | --- | --- |
 | `brainstorms/2026-08-01-giwa-agent-card-requirements.md` | The Product Contract: R-IDs, actors, flows, acceptance examples. | What to build. |
 | `plans/2026-08-01-001-feat-giwacard-mvp-plan.md` | The implementation plan: 18 KTDs, 12 units, verification contract. | How to build it. |
-| `grant/gasok-application.md` | GASOK application draft, bilingual. | Not yet submitted. |
+| `grant/gasok-application.md` | GASOK application draft, bilingual. | **Submitted 2026-08-02.** Result 2026-08-14. |
 | `demo.md` | The recorded-demo choreography. | — |
 
 ## How to use these
@@ -25,12 +25,16 @@ you correct a decision, grep the whole file for the old description.
 **Neither document tracks progress.** Whether something shipped is derived from
 git. There is no status field and no checkboxes to tick.
 
-## Before submitting the grant application
+## The application is already in
 
-`grant/gasok-application.md` is a draft with ~58 explicit `[ISI: ...]` /
-`[FILL: ...]` placeholders — team, contact, links, deployed addresses, demo
-video. They are blank deliberately rather than invented. Section 9 is the
-checklist.
+Submitted 2026-08-02 under Track 04 AI/WEB3, with answers written separately from
+this file. GIWA treats it as **Phase 3** and decides by **2026-08-14**.
+
+That makes the ~28 remaining `[FILL: ...]` placeholders here **not worth
+filling**. No reviewer reads this file; filling them is work nobody sees. Keep
+the document truthful as a record — §4.3 now carries the live end-to-end
+transactions — and spend the effort on things a reviewer does reach: the repo,
+the npm page, the contracts, and the demo recording.
 
 Two claims that must not creep back in: **no affiliation with Y Combinator**, and
 **no affiliation with agentcard.sh**. We adapt their MIT-licensed code with
