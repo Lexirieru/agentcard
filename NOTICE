@@ -7,6 +7,11 @@ substantial portion of the software, so those notices are reproduced below.
 GiwaCard is not affiliated with Agentcard Corporation. The onchain layer —
 CardVault, gUSD, the settlement scheme — is original work.
 
+**GiwaCard's own licence is in `LICENSE` at the root of this repository**, and
+the copyright there is GiwaCard's. Every notice reproduced *below* belongs to a
+third party and travels with their code because their licence requires it.
+Read the two apart: this file grants you nothing, it only credits.
+
 ---
 
 ## agentcard-mcp, agent-card-skill, imessage-agent-template

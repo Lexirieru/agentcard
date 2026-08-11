@@ -375,6 +375,12 @@ rails with an onchain vault; [`NOTICE`](./NOTICE) records exactly what came from
 
 Built on [GIWA](https://giwa.io), an Ethereum L2 in the Upbit ecosystem.
 
+## 📄 Licence
+
+MIT — see [`LICENSE`](./LICENSE). Note that the MIT notices reproduced in
+[`NOTICE`](./NOTICE) are third-party ones that travel with adapted code; they
+are not GiwaCard's own grant, which is the `LICENSE` file.
+
 <div align="center">
 <br/>
 
